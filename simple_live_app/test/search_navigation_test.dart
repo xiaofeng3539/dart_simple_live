@@ -14,7 +14,7 @@ void main() {
       (Constant.kDouyu, 'https://www.douyu.com/67890', '67890'),
       (
         Constant.kDouyin,
-        'https://www.douyin.com/root/live/921169302662',
+        'https://live.douyin.com/921169302662?enter_from_merge=web_live',
         '921169302662'
       ),
     ];

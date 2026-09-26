@@ -1,7 +1,10 @@
+import 'dart:collection';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/search/search_controller.dart';
 import 'package:simple_live_app/modules/search/search_room_url.dart';
@@ -58,14 +61,56 @@ class SearchPage extends GetView<AppSearchController> {
           initialSettings: InAppWebViewSettings(
             javaScriptCanOpenWindowsAutomatically: true,
             supportMultipleWindows: true,
+            useShouldOverrideUrlLoading: site.id == Constant.kDouyin,
           ),
+          initialUserScripts: site.id == Constant.kDouyin
+              ? UnmodifiableListView([
+                  UserScript(
+                    source: '''
+                      document.addEventListener('click', function(event) {
+                        var target = event.target;
+                        if (!(target instanceof Element)) return;
+                        var link = target.closest('a[href]');
+                        if (link) {
+                          window.flutter_inappwebview.callHandler(
+                            'simpleLiveDouyinRoom', link.href);
+                        }
+                      }, true);
+                    ''',
+                    injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+                    forMainFrameOnly: true,
+                  ),
+                ])
+              : null,
           onWebViewCreated: (webViewController) {
             controller.webViewController = webViewController;
             controller.onRoomDetected = _showRoomPrompt;
+            if (site.id == Constant.kDouyin) {
+              webViewController.addJavaScriptHandler(
+                handlerName: 'simpleLiveDouyinRoom',
+                callback: (args) {
+                  if (controller.selectedSite.value?.id == site.id &&
+                      args.isNotEmpty &&
+                      args.first is String) {
+                    final uri = Uri.tryParse(args.first as String);
+                    if (uri != null &&
+                        SearchRoomUrl.roomIdFor(site.id, uri) != null) {
+                      controller.updateUrl(uri);
+                    }
+                  }
+                },
+              );
+            }
           },
           onLoadStart: (_, uri) => controller.updateUrl(uri),
           onLoadStop: (_, uri) => controller.updateUrl(uri),
           onUpdateVisitedHistory: (_, uri, __) => controller.updateUrl(uri),
+          shouldOverrideUrlLoading: site.id == Constant.kDouyin
+              ? (_, action) async {
+                  controller.updateUrl(action.request.url);
+                  return NavigationActionPolicy.ALLOW;
+                }
+              : null,
           onCreateWindow: (_, action) => controller.openPopup(action),
         );
       }),
@@ -100,32 +145,48 @@ class SearchPage extends GetView<AppSearchController> {
   void _showRoomPrompt(String roomId) async {
     await Future<void>.delayed(Duration.zero);
     final site = controller.selectedSite.value;
-    if (controller.isClosed ||
-        site == null ||
-        controller.roomId.value != roomId) {
-      return;
-    }
+    if (controller.isClosed || site == null) return;
     final open = await Get.dialog<bool>(
-      AlertDialog(
-        title: const Text('检测到直播间'),
-        content: Text('已进入${site.name}直播间，是否在 Simple Live 中打开？'),
-        actions: [
-          TextButton(
-            onPressed: () => Get.back(result: false),
-            child: const Text('继续浏览网页'),
+      Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('已进入${site.name}直播间',
+                    style: Get.theme.textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text('要在 Simple Live 中观看吗？',
+                    style: Get.theme.textTheme.bodyMedium),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Get.back(result: false),
+                      child: const Text('继续浏览'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: () => Get.back(result: true),
+                      child: const Text('打开播放器'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-          FilledButton(
-            onPressed: () => Get.back(result: true),
-            child: const Text('打开播放器'),
-          ),
-        ],
+        ),
       ),
     );
     if (open == true &&
         !controller.isClosed &&
-        controller.selectedSite.value == site &&
-        controller.roomId.value == roomId) {
-      controller.openRoom();
+        controller.selectedSite.value == site) {
+      controller.openRoom(detectedRoomId: roomId);
     }
   }
 

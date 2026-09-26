@@ -57,9 +57,9 @@ class AppSearchController extends GetxController {
     return false;
   }
 
-  void openRoom() {
+  void openRoom({String? detectedRoomId}) {
     final site = selectedSite.value;
-    final id = roomId.value;
+    final id = detectedRoomId ?? roomId.value;
     if (site == null || id == null) return;
     AppNavigator.toLiveRoomDetail(site: site, roomId: id);
   }
