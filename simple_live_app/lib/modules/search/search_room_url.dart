@@ -40,9 +40,13 @@ class SearchRoomUrl {
         }
         return _roomSlug(segments.first);
       case Constant.kDouyin:
-        if (uri.host != 'live.douyin.com' || segments.length != 1) {
-          return null;
+        if (uri.host == 'www.douyin.com' &&
+            segments.length == 3 &&
+            segments[0] == 'root' &&
+            segments[1] == 'live') {
+          return RegExp(r'^\d+$').hasMatch(segments[2]) ? segments[2] : null;
         }
+        if (uri.host != 'live.douyin.com' || segments.length != 1) return null;
         return RegExp(r'^\d+$').hasMatch(segments.first)
             ? segments.first
             : null;

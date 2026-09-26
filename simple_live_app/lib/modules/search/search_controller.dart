@@ -7,22 +7,34 @@ import 'package:simple_live_app/routes/app_navigation.dart';
 class AppSearchController extends GetxController {
   final selectedSite = Rxn<Site>();
   final roomId = RxnString();
+  void Function(String roomId)? onRoomDetected;
+  String? _lastPromptedRoom;
   InAppWebViewController? webViewController;
 
   void selectSite(Site site) {
     roomId.value = null;
+    _lastPromptedRoom = null;
     selectedSite.value = site;
   }
 
   void updateUrl(Uri? uri) {
     final site = selectedSite.value;
-    roomId.value = site == null || uri == null
+    final detectedRoomId = site == null || uri == null
         ? null
         : SearchRoomUrl.roomIdFor(site.id, uri);
+    roomId.value = detectedRoomId;
+    if (site != null && detectedRoomId != null) {
+      final roomKey = '${site.id}:$detectedRoomId';
+      if (_lastPromptedRoom != roomKey) {
+        _lastPromptedRoom = roomKey;
+        onRoomDetected?.call(detectedRoomId);
+      }
+    }
   }
 
   void reset() {
     roomId.value = null;
+    _lastPromptedRoom = null;
     selectedSite.value = null;
     webViewController = null;
   }

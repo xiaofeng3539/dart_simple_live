@@ -47,6 +47,14 @@ void main() {
       ),
       '1234567890',
     );
+    expect(
+      SearchRoomUrl.roomIdFor(
+        Constant.kDouyin,
+        Uri.parse(
+            'https://www.douyin.com/root/live/921169302662?room_id=7689851218365139754'),
+      ),
+      '921169302662',
+    );
   });
 
   test('首页、搜索页及其他域名不显示跳转按钮', () {

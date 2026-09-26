@@ -61,6 +61,7 @@ class SearchPage extends GetView<AppSearchController> {
           ),
           onWebViewCreated: (webViewController) {
             controller.webViewController = webViewController;
+            controller.onRoomDetected = _showRoomPrompt;
           },
           onLoadStart: (_, uri) => controller.updateUrl(uri),
           onLoadStop: (_, uri) => controller.updateUrl(uri),
@@ -94,6 +95,38 @@ class SearchPage extends GetView<AppSearchController> {
         );
       }),
     );
+  }
+
+  void _showRoomPrompt(String roomId) async {
+    await Future<void>.delayed(Duration.zero);
+    final site = controller.selectedSite.value;
+    if (controller.isClosed ||
+        site == null ||
+        controller.roomId.value != roomId) {
+      return;
+    }
+    final open = await Get.dialog<bool>(
+      AlertDialog(
+        title: const Text('检测到直播间'),
+        content: Text('已进入${site.name}直播间，是否在 Simple Live 中打开？'),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: const Text('继续浏览网页'),
+          ),
+          FilledButton(
+            onPressed: () => Get.back(result: true),
+            child: const Text('打开播放器'),
+          ),
+        ],
+      ),
+    );
+    if (open == true &&
+        !controller.isClosed &&
+        controller.selectedSite.value == site &&
+        controller.roomId.value == roomId) {
+      controller.openRoom();
+    }
   }
 
   Widget _platformPicker(BuildContext context) {
