@@ -1,90 +1,54 @@
-import 'dart:async';
-
-import 'package:flutter/material.dart';
-
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/sites.dart';
-import 'package:simple_live_app/modules/search/search_list_controller.dart';
+import 'package:simple_live_app/modules/search/search_room_url.dart';
+import 'package:simple_live_app/routes/app_navigation.dart';
 
-class AppSearchController extends GetxController
-    with GetSingleTickerProviderStateMixin {
-  late TabController tabController;
-  int index = 0;
+class AppSearchController extends GetxController {
+  final selectedSite = Rxn<Site>();
+  final roomId = RxnString();
+  InAppWebViewController? webViewController;
 
-  var searchMode = 0.obs;
-
-  AppSearchController() {
-    tabController =
-        TabController(length: Sites.supportSites.length, vsync: this);
-    tabController.animation?.addListener(() {
-      var currentIndex = (tabController.animation?.value ?? 0).round();
-      if (index == currentIndex) {
-        return;
-      }
-
-      index = currentIndex;
-      // if (Sites.supportSites[index].id == Constant.kDouyin) {
-      //   return;
-      // }
-
-      var controller =
-          Get.find<SearchListController>(tag: Sites.supportSites[index].id);
-
-      if (controller.list.isEmpty &&
-          !controller.pageEmpty.value &&
-          controller.keyword.isNotEmpty) {
-        controller.refreshData();
-      }
-    });
+  void selectSite(Site site) {
+    roomId.value = null;
+    selectedSite.value = site;
   }
 
-  StreamSubscription<dynamic>? streamSubscription;
-
-  TextEditingController searchController = TextEditingController();
-
-  @override
-  void onInit() {
-    for (var site in Sites.supportSites) {
-      // if (site.id == Constant.kDouyin) {
-      //   Get.put(DouyinSearchController(site));
-      // } else {
-      Get.put(
-        SearchListController(site),
-        tag: site.id,
-      );
-      //}
-    }
-
-    super.onInit();
+  void updateUrl(Uri? uri) {
+    final site = selectedSite.value;
+    roomId.value = site == null || uri == null
+        ? null
+        : SearchRoomUrl.roomIdFor(site.id, uri);
   }
 
-  void doSearch() {
-    if (searchController.text.isEmpty) {
-      return;
-    }
-    for (var site in Sites.supportSites) {
-      // if (site.id == Constant.kDouyin) {
-      //   var controller = Get.find<DouyinSearchController>();
-      //   controller.keyword = searchController.text;
-      //   controller.searchMode.value = searchMode.value;
-      //   controller.reloadWebView();
-      // } else {
-      var controller = Get.find<SearchListController>(tag: site.id);
-      controller.clear();
-      controller.keyword = searchController.text;
-      controller.searchMode.value = searchMode.value;
-      //}
-    }
-    // if (Sites.supportSites[index].id != Constant.kDouyin) {
-    var controller =
-        Get.find<SearchListController>(tag: Sites.supportSites[index].id);
-    controller.refreshData();
-    //}
+  void reset() {
+    roomId.value = null;
+    selectedSite.value = null;
+    webViewController = null;
   }
 
-  @override
-  void onClose() {
-    streamSubscription?.cancel();
-    super.onClose();
+  Future<void> goBackInWebView() async {
+    if (await webViewController?.canGoBack() ?? false) {
+      await webViewController?.goBack();
+    }
+  }
+
+  Future<void> reloadWebView() async {
+    await webViewController?.reload();
+  }
+
+  Future<bool> openPopup(CreateWindowAction action) async {
+    final url = action.request.url;
+    if (url == null || webViewController == null) return false;
+    updateUrl(url);
+    await webViewController!.loadUrl(urlRequest: action.request);
+    return false;
+  }
+
+  void openRoom() {
+    final site = selectedSite.value;
+    final id = roomId.value;
+    if (site == null || id == null) return;
+    AppNavigator.toLiveRoomDetail(site: site, roomId: id);
   }
 }

@@ -1,106 +1,127 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/search/search_controller.dart';
-import 'package:simple_live_app/modules/search/search_list_view.dart';
+import 'package:simple_live_app/modules/search/search_room_url.dart';
 
 class SearchPage extends GetView<AppSearchController> {
-  const SearchPage({Key? key}) : super(key: key);
+  const SearchPage({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: false,
-        title: TextField(
-          controller: controller.searchController,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: "搜点什么吧",
-            border: OutlineInputBorder(
-              borderRadius: AppStyle.radius24,
-            ),
-            contentPadding: AppStyle.edgeInsetsH12,
-            prefixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
+        leading: Obx(
+          () => IconButton(
+            tooltip: controller.selectedSite.value == null ? '返回' : '选择平台',
+            onPressed: controller.selectedSite.value == null
+                ? Get.back
+                : controller.reset,
+            icon: const Icon(Icons.arrow_back),
+          ),
+        ),
+        title: Obx(
+          () => Text(controller.selectedSite.value?.name ?? '搜索直播'),
+        ),
+        actions: [
+          Obx(() {
+            if (controller.selectedSite.value == null) {
+              return const SizedBox.shrink();
+            }
+            return Row(
               children: [
                 IconButton(
-                  onPressed: Get.back,
-                  icon: const Icon(Icons.arrow_back),
+                  tooltip: '网页后退',
+                  onPressed: controller.goBackInWebView,
+                  icon: const Icon(Icons.chevron_left),
                 ),
-                Obx(
-                  () => DropdownButton<int>(
-                    underline: const SizedBox(),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 0,
-                        child: Text("房间"),
-                      ),
-                      DropdownMenuItem(
-                        value: 1,
-                        child: Text("主播"),
-                      ),
-                    ],
-                    value: controller.searchMode.value,
-                    onChanged: (e) {
-                      controller.searchMode.value = e ?? 0;
-                      controller.doSearch();
-                    },
+                IconButton(
+                  tooltip: '刷新网页',
+                  onPressed: controller.reloadWebView,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            );
+          }),
+        ],
+      ),
+      body: Obx(() {
+        final site = controller.selectedSite.value;
+        if (site == null) return _platformPicker(context);
+        return InAppWebView(
+          key: ValueKey(site.id),
+          initialUrlRequest: URLRequest(
+            url: WebUri(SearchRoomUrl.homeUriFor(site.id).toString()),
+          ),
+          initialSettings: InAppWebViewSettings(
+            javaScriptCanOpenWindowsAutomatically: true,
+            supportMultipleWindows: true,
+          ),
+          onWebViewCreated: (webViewController) {
+            controller.webViewController = webViewController;
+          },
+          onLoadStart: (_, uri) => controller.updateUrl(uri),
+          onLoadStop: (_, uri) => controller.updateUrl(uri),
+          onUpdateVisitedHistory: (_, uri, __) => controller.updateUrl(uri),
+          onCreateWindow: (_, action) => controller.openPopup(action),
+        );
+      }),
+      bottomNavigationBar: Obx(() {
+        if (controller.selectedSite.value == null ||
+            controller.roomId.value == null) {
+          return const SizedBox.shrink();
+        }
+        return SafeArea(
+          child: Padding(
+            padding: AppStyle.edgeInsetsA12,
+            child: Center(
+              heightFactor: 1,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: controller.openRoom,
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('在 Simple Live 中打开'),
                   ),
                 ),
-                AppStyle.hGap8,
-              ],
-            ),
-            suffixIcon: IconButton(
-              onPressed: controller.doSearch,
-              icon: const Icon(Icons.search),
+              ),
             ),
           ),
-          onSubmitted: (e) {
-            controller.doSearch();
-          },
-        ),
-        bottom: TabBar(
-          controller: controller.tabController,
-          padding: EdgeInsets.zero,
-          tabAlignment: TabAlignment.center,
-          tabs: Sites.supportSites
-              .map(
-                (e) => Tab(
-                  //text: e.name,
-                  child: Row(
-                    children: [
-                      Image.asset(
-                        e.logo,
-                        width: 24,
-                      ),
-                      AppStyle.hGap8,
-                      Text(e.name),
-                    ],
-                  ),
+        );
+      }),
+    );
+  }
+
+  Widget _platformPicker(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: ListView(
+          padding: AppStyle.edgeInsetsA12,
+          children: [
+            Padding(
+              padding: AppStyle.edgeInsetsA12,
+              child: Text(
+                '选择平台，在网页中搜索并进入直播间',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            ...Sites.supportSites.map(
+              (site) => Card(
+                child: ListTile(
+                  leading: Image.asset(site.logo, width: 32, height: 32),
+                  title: Text(site.name),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => controller.selectSite(site),
                 ),
-              )
-              .toList(),
-          labelPadding: AppStyle.edgeInsetsH20,
-          isScrollable: true,
-          indicatorSize: TabBarIndicatorSize.label,
+              ),
+            ),
+          ],
         ),
-      ),
-      body: TabBarView(
-        physics: const NeverScrollableScrollPhysics(),
-        controller: controller.tabController,
-        children: Sites.supportSites
-            .map((e) => SearchListView(
-                      e.id,
-                    )
-                // (e) => e.id == Constant.kDouyin
-                //     ? const DouyinSearchView()
-                //     : SearchListView(
-                //         e.id,
-                //       ),
-                )
-            .toList(),
       ),
     );
   }
