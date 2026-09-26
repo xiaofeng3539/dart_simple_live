@@ -5,6 +5,7 @@ import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/route_path.dart';
+import 'package:simple_live_app/services/signalr_service.dart';
 import 'package:simple_live_app/widgets/settings/settings_card.dart';
 
 class SyncPage extends StatelessWidget {
@@ -24,7 +25,7 @@ class SyncPage extends StatelessWidget {
                 if (result == null || result.isEmpty) {
                   return;
                 }
-                if (result.length == 5) {
+                if (result.length == SignalRService.kRoomIdLength) {
                   Get.toNamed(RoutePath.kRemoteSyncRoom, arguments: result);
                 } else {
                   Get.toNamed(RoutePath.kLocalSync, arguments: result);
@@ -74,8 +75,8 @@ class SyncPage extends StatelessWidget {
                           SmartDialog.showToast("房间号不能为空");
                           return false;
                         }
-                        if (text.length != 5) {
-                          SmartDialog.showToast("请输入5位房间号");
+                        if (text.length != SignalRService.kRoomIdLength) {
+                          SmartDialog.showToast("请输入6位房间号");
                           return false;
                         }
                         return true;

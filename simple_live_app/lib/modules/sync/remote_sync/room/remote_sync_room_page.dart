@@ -229,7 +229,7 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
                       TextSpan(
                         text: user.shortId,
                         style: const TextStyle(fontSize: 16),
-                        children: user.isCreator!
+                        children: user.isCreator
                             ? [
                                 WidgetSpan(
                                   child: Container(
@@ -254,8 +254,7 @@ class RemoteSyncRoomPage extends GetView<RemoteSyncRoomController> {
                     ),
                     subtitle: Text("${user.app} - v${user.version}"),
                     trailing: Visibility(
-                      visible: controller.signalR.hubConnection?.connectionId ==
-                          user.connectionId,
+                      visible: user.isSelf,
                       child: const Text(
                         "本机",
                       ),

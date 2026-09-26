@@ -8,6 +8,7 @@ import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/route_path.dart';
+import 'package:simple_live_app/services/signalr_service.dart';
 
 class SyncScanQRControlelr extends BaseController {
   final GlobalKey qrKey = GlobalKey(debugLabel: 'QR');
@@ -33,8 +34,8 @@ class SyncScanQRControlelr extends BaseController {
         return;
       }
 
-      // 如果是5位字符串，为房间号
-      if (code.length == 5) {
+      // 如果是6位字符串，为房间号
+      if (code.length == SignalRService.kRoomIdLength) {
         Get.offAndToNamed(RoutePath.kRemoteSyncRoom, arguments: code);
         return;
       } else {

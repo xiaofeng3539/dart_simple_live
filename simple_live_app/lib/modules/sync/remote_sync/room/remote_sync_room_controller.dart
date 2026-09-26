@@ -70,7 +70,7 @@ class RemoteSyncRoomController extends BaseController {
         _startTimer();
       } else {
         Log.w('创建房间失败：${resp.message}');
-        await _showRemoteSyncUnavailable('远程同步服务暂时无法创建房间。');
+        await _showRemoteSyncUnavailable('创建房间失败：${resp.message}');
       }
     } catch (e, stackTrace) {
       Log.e('创建房间失败：$e', stackTrace);
