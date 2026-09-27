@@ -76,12 +76,13 @@ double volumeAfterScroll(double currentVolume, double scrollDeltaY) {
 void _onVolumePointerSignal(
   PointerSignalEvent event,
   LiveRoomController controller,
+  BuildContext? targetContext,
 ) {
   if (event is PointerScrollEvent) {
-    GestureBinding.instance.pointerSignalResolver.register(
-      event,
-      (_) => adjustVolumeOnScroll(event, controller),
-    );
+    adjustVolumeOnScroll(event, controller);
+    if (targetContext != null) {
+      controller.showVolumeSlider(targetContext);
+    }
   }
 }
 
@@ -361,7 +362,8 @@ Widget buildFullControls(
                     visible: !Platform.isAndroid && !Platform.isIOS,
                     child: Listener(
                       onPointerSignal: (event) =>
-                          _onVolumePointerSignal(event, controller),
+                          _onVolumePointerSignal(
+                              event, controller, volumeButtonkey.currentContext),
                       child: IconButton(
                         key: volumeButtonkey,
                         onPressed: () {
@@ -623,7 +625,8 @@ Widget buildControls(
                   visible: !Platform.isAndroid && !Platform.isIOS,
                   child: Listener(
                     onPointerSignal: (event) =>
-                        _onVolumePointerSignal(event, controller),
+                        _onVolumePointerSignal(
+                            event, controller, volumeButtonkey.currentContext),
                     child: IconButton(
                       key: volumeButtonkey,
                       onPressed: () {

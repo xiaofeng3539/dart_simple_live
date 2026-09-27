@@ -25,6 +25,12 @@ class SearchRoomUrl {
             : null;
       case Constant.kHuya:
         if (uri.host != 'www.huya.com' || segments.length != 1) return null;
+        if ({
+          'search', 'index', 'g', 'all', 'video', 'match',
+          'live', 'l', 'hot', 'home', 'category', 'zhubo', 'topic',
+        }.contains(segments.first)) {
+          return null;
+        }
         return _roomSlug(segments.first);
       case Constant.kDouyu:
         if (uri.host != 'www.douyu.com') return null;

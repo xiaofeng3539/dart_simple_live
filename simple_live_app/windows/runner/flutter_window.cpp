@@ -53,6 +53,7 @@ bool FlutterWindow::OnCreate() {
         }
       });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+  EnsureTrayIcon();
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
@@ -76,7 +77,7 @@ void FlutterWindow::OnDestroy() {
   Win32Window::OnDestroy();
 }
 
-void FlutterWindow::HideToTray() {
+void FlutterWindow::EnsureTrayIcon() {
   if (tray_icon_visible_) return;
   NOTIFYICONDATAW icon{};
   icon.cbSize = sizeof(icon);
@@ -89,8 +90,12 @@ void FlutterWindow::HideToTray() {
   if (Shell_NotifyIconW(NIM_ADD, &icon)) {
     tray_icon_visible_ = true;
     tray_window_ = GetHandle();
-    ShowWindow(GetHandle(), SW_HIDE);
   }
+}
+
+void FlutterWindow::HideToTray() {
+  EnsureTrayIcon();
+  if (tray_icon_visible_) ShowWindow(GetHandle(), SW_HIDE);
 }
 
 void FlutterWindow::RemoveTrayIcon() {
@@ -105,7 +110,6 @@ void FlutterWindow::RemoveTrayIcon() {
 }
 
 void FlutterWindow::RestoreFromTray() {
-  RemoveTrayIcon();
   ShowWindow(GetHandle(), SW_RESTORE);
   SetForegroundWindow(GetHandle());
 }
@@ -142,9 +146,6 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       }
     }
     return 0;
-  }
-  if (message == WM_SHOWWINDOW && wparam && tray_icon_visible_) {
-    RemoveTrayIcon();
   }
   if (message == kExitMessage) {
     RemoveTrayIcon();

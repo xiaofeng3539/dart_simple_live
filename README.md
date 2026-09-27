@@ -1,4 +1,4 @@
-> ### ⚠ 本项目不提供Release安装包，请自行编译后运行测试。
+> 当前仓库发布源代码。Windows 可按下方步骤编译并打包为 ZIP；暂未提供 GitHub Release 安装包。
 
 
 <p align="center">
@@ -43,6 +43,25 @@
 ## 环境
 
 Flutter : `3.44.8`
+
+## Windows 版本
+
+当前 Windows 开发版本：`windows-v1.11.4-20260927`（对应应用版本 `1.11.4+11104`）。
+
+- 支持虎牙、斗鱼、哔哩哔哩和抖音直播。
+- 搜索入口可在应用内打开各平台网页；进入可识别的直播间后，可选择用 Simple Live 播放器打开。
+- 分类区域展示各平台分类；抖音分类数据读取已针对当前网页格式修复。
+- 支持窗口关闭后留在系统托盘，以及播放器快捷键和音量调节。
+
+在 Windows 上安装 Flutter 3.44.8 和 Windows 桌面开发工具后，进入 `simple_live_app` 目录执行：
+
+```powershell
+flutter pub get
+flutter build windows --release
+Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath SimpleLive-Windows-x64.zip
+```
+
+运行程序时须保留 ZIP 内的 EXE、DLL 和 `data` 目录。各平台网页和接口可能调整；当前版本尚未完成所有平台的实机验收。
 
 ## 参考及引用
 

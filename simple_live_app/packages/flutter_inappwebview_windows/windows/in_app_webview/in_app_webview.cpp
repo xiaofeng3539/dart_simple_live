@@ -193,6 +193,7 @@ namespace flutter_inappwebview_plugin
     auto hrWebView2Settings = webView->get_Settings(&webView2Settings);
     if (succeededOrLog(hrWebView2Settings)) {
       webView2Settings->put_IsScriptEnabled(settings->javaScriptEnabled);
+      webView2Settings->put_IsStatusBarEnabled(FALSE);
       webView2Settings->put_IsZoomControlEnabled(settings->supportZoom);
       webView2Settings->put_AreDevToolsEnabled(settings->isInspectable);
       webView2Settings->put_AreDefaultContextMenusEnabled(!settings->disableContextMenu);

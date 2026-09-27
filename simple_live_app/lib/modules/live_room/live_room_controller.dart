@@ -106,6 +106,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   // 开播时长状态变量
   var liveDuration = "00:00:00".obs;
   Timer? _liveDurationTimer;
+  Timer? _volumeSliderTimer;
+  bool _volumeSliderOpen = false;
+  static const _volumeSliderTag = 'simple-live-volume-slider';
 
   @override
   void onInit() {
@@ -621,29 +624,71 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   void showVolumeSlider(BuildContext targetContext) {
+    _volumeSliderTimer?.cancel();
+    _volumeSliderTimer = Timer(const Duration(milliseconds: 2500), () {
+      SmartDialog.dismiss(status: SmartStatus.attach, tag: _volumeSliderTag);
+    });
+    if (_volumeSliderOpen) return;
+    _volumeSliderOpen = true;
     SmartDialog.showAttach(
       targetContext: targetContext,
       alignment: Alignment.topCenter,
-      displayTime: const Duration(seconds: 3),
       maskColor: const Color(0x00000000),
+      tag: _volumeSliderTag,
+      usePenetrate: true,
+      useAnimation: false,
+      onDismiss: () {
+        _volumeSliderOpen = false;
+        _volumeSliderTimer?.cancel();
+      },
       builder: (context) {
+        final colors = Theme.of(context).colorScheme;
         return Container(
           decoration: BoxDecoration(
-            borderRadius: AppStyle.radius12,
-            color: Theme.of(context).cardColor,
+            borderRadius: BorderRadius.circular(14),
+            color: colors.surfaceContainerHigh,
+            border: Border.all(color: colors.outlineVariant),
           ),
-          padding: AppStyle.edgeInsetsA4,
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: Obx(
             () => SizedBox(
-              width: 200,
-              child: Slider(
-                min: 0,
-                max: 100,
-                value: AppSettingsController.instance.playerVolume.value,
-                onChanged: (newValue) {
-                  player.setVolume(newValue);
-                  AppSettingsController.instance.setPlayerVolume(newValue);
-                },
+              width: 208,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.volume_up_outlined,
+                          size: 18, color: colors.onSurfaceVariant),
+                      const SizedBox(width: 8),
+                      Text('音量', style: TextStyle(color: colors.onSurface)),
+                      const Spacer(),
+                      Text(
+                        '${AppSettingsController.instance.playerVolume.value.round()}%',
+                        style: TextStyle(
+                          color: colors.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 3,
+                      thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 7),
+                    ),
+                    child: Slider(
+                      min: 0,
+                      max: 100,
+                      value: AppSettingsController.instance.playerVolume.value,
+                      onChanged: (newValue) {
+                        player.setVolume(newValue);
+                        AppSettingsController.instance.setPlayerVolume(newValue);
+                      },
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1053,6 +1098,10 @@ ${error?.stackTrace}''');
 
   @override
   void onClose() {
+    _volumeSliderTimer?.cancel();
+    if (_volumeSliderOpen) {
+      SmartDialog.dismiss(status: SmartStatus.attach, tag: _volumeSliderTag);
+    }
     WidgetsBinding.instance.removeObserver(this);
     scrollController.removeListener(scrollListener);
     autoExitTimer?.cancel();

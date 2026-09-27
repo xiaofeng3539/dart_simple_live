@@ -66,27 +66,36 @@ class DouyinSite implements LiveSite {
 
   @override
   Future<List<LiveCategory>> getCategores() async {
-    List<LiveCategory> categories = [];
     var result = await HttpClient.instance.getText(
       "https://live.douyin.com/",
       queryParameters: {},
       header: await getRequestHeaders(),
     );
+    return parseCategories(result);
+  }
 
-    var renderData =
-        RegExp(
-          r'\{\\"pathname\\":\\"\/\\",\\"categoryData.*?\]\\n',
-        ).firstMatch(result)?.group(0) ??
-        "";
-    var renderDataJson = json.decode(
-      renderData
-          .trim()
-          .replaceAll('\\"', '"')
-          .replaceAll(r"\\", r"\")
-          .replaceAll(']\\n', ""),
-    );
+  static List<LiveCategory> parseCategories(String page) {
+    const marker = r'\"categoryData\":';
+    final markerIndex = page.indexOf(marker);
+    if (markerIndex < 0) throw const FormatException('未找到抖音分类数据');
+    final start = page.indexOf('[', markerIndex + marker.length);
+    if (start < 0) throw const FormatException('抖音分类数据格式错误');
+    var depth = 0;
+    var end = -1;
+    for (var i = start; i < page.length; i++) {
+      if (page[i] == '[') depth++;
+      if (page[i] == ']' && --depth == 0) {
+        end = i;
+        break;
+      }
+    }
+    if (end < 0) throw const FormatException('抖音分类数据不完整');
+    final encoded = page.substring(start, end + 1);
+    final renderDataJson =
+        json.decode(json.decode('"$encoded"') as String) as List<dynamic>;
+    List<LiveCategory> categories = [];
 
-    for (var item in renderDataJson["categoryData"]) {
+    for (var item in renderDataJson) {
       List<LiveSubCategory> subs = [];
       var id = '${item["partition"]["id_str"]},${item["partition"]["type"]}';
       for (var subItem in item["sub_partition"]) {

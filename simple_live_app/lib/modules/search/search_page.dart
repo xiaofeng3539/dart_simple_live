@@ -53,20 +53,21 @@ class SearchPage extends GetView<AppSearchController> {
       body: Obx(() {
         final site = controller.selectedSite.value;
         if (site == null) return _platformPicker(context);
-        return InAppWebView(
-          key: ValueKey(site.id),
-          initialUrlRequest: URLRequest(
-            url: WebUri(SearchRoomUrl.homeUriFor(site.id).toString()),
-          ),
-          initialSettings: InAppWebViewSettings(
-            javaScriptCanOpenWindowsAutomatically: true,
-            supportMultipleWindows: true,
-            useShouldOverrideUrlLoading: site.id == Constant.kDouyin,
-          ),
-          initialUserScripts: site.id == Constant.kDouyin
-              ? UnmodifiableListView([
-                  UserScript(
-                    source: '''
+        return Offstage(
+          offstage: !controller.webViewVisible.value,
+          child: InAppWebView(
+            key: ValueKey(site.id),
+            initialUrlRequest: URLRequest(
+              url: WebUri(SearchRoomUrl.homeUriFor(site.id).toString()),
+            ),
+            initialSettings: InAppWebViewSettings(
+              javaScriptCanOpenWindowsAutomatically: true,
+              supportMultipleWindows: true,
+            ),
+            initialUserScripts: site.id == Constant.kDouyin
+                ? UnmodifiableListView([
+                    UserScript(
+                      source: '''
                       document.addEventListener('click', function(event) {
                         var target = event.target;
                         if (!(target instanceof Element)) return;
@@ -77,45 +78,41 @@ class SearchPage extends GetView<AppSearchController> {
                         }
                       }, true);
                     ''',
-                    injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
-                    forMainFrameOnly: true,
-                  ),
-                ])
-              : null,
-          onWebViewCreated: (webViewController) {
-            controller.webViewController = webViewController;
-            controller.onRoomDetected = _showRoomPrompt;
-            if (site.id == Constant.kDouyin) {
-              webViewController.addJavaScriptHandler(
-                handlerName: 'simpleLiveDouyinRoom',
-                callback: (args) {
-                  if (controller.selectedSite.value?.id == site.id &&
-                      args.isNotEmpty &&
-                      args.first is String) {
-                    final uri = Uri.tryParse(args.first as String);
-                    if (uri != null &&
-                        SearchRoomUrl.roomIdFor(site.id, uri) != null) {
-                      controller.updateUrl(uri);
+                      injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+                      forMainFrameOnly: true,
+                    ),
+                  ])
+                : null,
+            onWebViewCreated: (webViewController) {
+              controller.webViewController = webViewController;
+              controller.onRoomDetected = _showRoomPrompt;
+              if (site.id == Constant.kDouyin) {
+                webViewController.addJavaScriptHandler(
+                  handlerName: 'simpleLiveDouyinRoom',
+                  callback: (args) {
+                    if (controller.selectedSite.value?.id == site.id &&
+                        args.isNotEmpty &&
+                        args.first is String) {
+                      final uri = Uri.tryParse(args.first as String);
+                      if (uri != null &&
+                          SearchRoomUrl.roomIdFor(site.id, uri) != null) {
+                        controller.updateUrl(uri);
+                      }
                     }
-                  }
-                },
-              );
-            }
-          },
-          onLoadStart: (_, uri) => controller.updateUrl(uri),
-          onLoadStop: (_, uri) => controller.updateUrl(uri),
-          onUpdateVisitedHistory: (_, uri, __) => controller.updateUrl(uri),
-          shouldOverrideUrlLoading: site.id == Constant.kDouyin
-              ? (_, action) async {
-                  controller.updateUrl(action.request.url);
-                  return NavigationActionPolicy.ALLOW;
-                }
-              : null,
-          onCreateWindow: (_, action) => controller.openPopup(action),
+                  },
+                );
+              }
+            },
+            onLoadStart: (_, uri) => controller.updateUrl(uri),
+            onLoadStop: (_, uri) => controller.updateUrl(uri),
+            onUpdateVisitedHistory: (_, uri, __) => controller.updateUrl(uri),
+            onCreateWindow: (_, action) => controller.openPopup(action),
+          ),
         );
       }),
       bottomNavigationBar: Obx(() {
         if (controller.selectedSite.value == null ||
+            !controller.webViewVisible.value ||
             controller.roomId.value == null) {
           return const SizedBox.shrink();
         }
