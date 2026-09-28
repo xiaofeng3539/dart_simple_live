@@ -40,12 +40,12 @@ class RemoteSyncRoomController extends BaseController {
 
   @override
   void onInit() {
+    listenSignalR();
     connect();
     super.onInit();
   }
 
   void connect() async {
-    listenSignalR();
     try {
       await signalR.connect();
       if (isClosed) return;
@@ -58,7 +58,20 @@ class RemoteSyncRoomController extends BaseController {
       }
     } catch (e, stackTrace) {
       Log.e('连接远程同步服务失败：$e', stackTrace);
-      await _showRemoteSyncUnavailable('无法连接远程同步服务。');
+      if (isClosed) return;
+      final retry = await Utils.showAlertDialog(
+        '设备无法连接远程同步服务：\n$e\n\n请检查网络后重试。',
+        title: '远程同步不可用',
+        cancel: '返回同步选项',
+        confirm: '重试',
+        selectable: true,
+      );
+      if (isClosed) return;
+      if (retry) {
+        connect();
+      } else {
+        Get.back();
+      }
     }
   }
 

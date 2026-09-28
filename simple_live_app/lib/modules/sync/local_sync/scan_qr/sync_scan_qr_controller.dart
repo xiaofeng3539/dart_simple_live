@@ -3,18 +3,40 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_code_scanner_plus/qr_code_scanner_plus.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
-import 'package:simple_live_app/routes/route_path.dart';
-import 'package:simple_live_app/services/signalr_service.dart';
 
 class SyncScanQRControlelr extends BaseController {
   final GlobalKey qrKey = GlobalKey(debugLabel: 'QR');
   QRViewController? qrController;
   StreamSubscription<Barcode>? barcodeStreamSubscription;
+  final cameraReady = RxnBool();
   bool pause = false;
+
+  @override
+  void onReady() {
+    super.onReady();
+    requestCameraPermission();
+  }
+
+  Future<void> requestCameraPermission() async {
+    var status = await Permission.camera.status;
+    if (status.isPermanentlyDenied) {
+      await openAppSettings();
+      status = await Permission.camera.status;
+    } else if (!status.isGranted) {
+      status = await Permission.camera.request();
+    }
+    cameraReady.value = status.isGranted;
+  }
+
+  void onPermissionSet(QRViewController _, bool granted) {
+    if (!granted) cameraReady.value = false;
+  }
+
   void onQRViewCreated(QRViewController controller) {
     qrController = controller;
     barcodeStreamSubscription =
@@ -26,7 +48,7 @@ class SyncScanQRControlelr extends BaseController {
       pause = true;
       // 扫码成功后暂停摄像头
       await controller.pauseCamera();
-      var code = scanData.code ?? "";
+      var code = scanData.code?.trim() ?? "";
       // 处理扫码结果
       if (code.isEmpty) {
         pause = false;
@@ -34,23 +56,21 @@ class SyncScanQRControlelr extends BaseController {
         return;
       }
 
-      // 如果是6位字符串，为房间号
-      if (code.length == SignalRService.kRoomIdLength) {
-        Get.offAndToNamed(RoutePath.kRemoteSyncRoom, arguments: code);
-        return;
-      } else {
-        var addressList = code.split(";");
-        if (addressList.length >= 2) {
-          //弹窗选择
-          showPickerAddress(addressList);
-        } else {
-          Get.back(result: code);
+      var addressList = code.split(";").where((e) => e.isNotEmpty).toList();
+      if (addressList.length >= 2) {
+        final address = await showPickerAddress(addressList);
+        if (address == null) {
+          pause = false;
+          await controller.resumeCamera();
+          return;
         }
+        code = address;
       }
+      Get.back(result: code);
     });
   }
 
-  void showPickerAddress(List<String> addressList) async {
+  Future<String?> showPickerAddress(List<String> addressList) async {
     SmartDialog.showToast("扫描到多个地址，请选择一个连接");
     var address = await Utils.showBottomSheet(
       title: '请选择地址',
@@ -66,9 +86,7 @@ class SyncScanQRControlelr extends BaseController {
         itemCount: addressList.length,
       ),
     );
-    if (address != null && address.isNotEmpty) {
-      Get.back(result: address);
-    }
+    return address is String && address.isNotEmpty ? address : null;
   }
 
   @override

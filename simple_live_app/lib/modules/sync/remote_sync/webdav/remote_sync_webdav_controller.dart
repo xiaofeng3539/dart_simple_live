@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -230,10 +229,7 @@ class RemoteSyncWebDAVController extends BaseController {
     SmartDialog.showLoading(msg: "正在恢复到本地");
     try {
       final data = await davClient.recovery();
-      final archive = await Isolate.run<Archive>(() {
-        final zipDecoder = ZipDecoder();
-        return zipDecoder.decodeBytes(data);
-      });
+      final archive = ZipDecoder().decodeBytes(data);
       if (isSyncFollows.value &&
           !archive.any((file) => file.name == _userFollowJsonName)) {
         throw const FormatException('备份中缺少关注列表');

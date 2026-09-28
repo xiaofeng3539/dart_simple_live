@@ -27,15 +27,36 @@ class SyncScanQRPage extends GetView<SyncScanQRControlelr> {
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          QRView(
-            key: controller.qrKey,
-            onQRViewCreated: controller.onQRViewCreated,
-          ),
-          const ScanRectangle(),
-        ],
-      ),
+      body: Obx(() {
+        final cameraReady = controller.cameraReady.value;
+        if (cameraReady == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (!cameraReady) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('需要相机权限才能扫描二维码'),
+                TextButton(
+                  onPressed: controller.requestCameraPermission,
+                  child: const Text('授权相机'),
+                ),
+              ],
+            ),
+          );
+        }
+        return Stack(
+          children: [
+            QRView(
+              key: controller.qrKey,
+              onQRViewCreated: controller.onQRViewCreated,
+              onPermissionSet: controller.onPermissionSet,
+            ),
+            const ScanRectangle(),
+          ],
+        );
+      }),
     );
   }
 }
