@@ -1,6 +1,11 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:get/get.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/search/search_room_url.dart';
@@ -11,12 +16,30 @@ class AppSearchController extends GetxController {
   final selectedSite = Rxn<Site>();
   final roomId = RxnString();
   final webViewVisible = true.obs;
+  final webViewLoading = false.obs;
+  final webViewError = RxnString();
   void Function(String roomId)? onRoomDetected;
   String? _lastPromptedRoom;
   InAppWebViewController? webViewController;
+  Future<WebViewEnvironment?>? _webViewEnvironment;
+  Timer? _loadTimer;
+
+  Future<WebViewEnvironment?> get webViewEnvironment =>
+      _webViewEnvironment ??= _createWebViewEnvironment();
+
+  Future<WebViewEnvironment?> _createWebViewEnvironment() async {
+    if (!Platform.isWindows) return null;
+    final supportDir = await getApplicationSupportDirectory();
+    final profileDir = Directory(p.join(supportDir.path, 'search_webview'));
+    await profileDir.create(recursive: true);
+    return WebViewEnvironment.create(
+      settings: WebViewEnvironmentSettings(userDataFolder: profileDir.path),
+    );
+  }
 
   void selectSite(Site site) {
     webViewVisible.value = true;
+    startLoading();
     roomId.value = null;
     _lastPromptedRoom = null;
     selectedSite.value = site;
@@ -39,6 +62,9 @@ class AppSearchController extends GetxController {
   }
 
   void reset() {
+    _loadTimer?.cancel();
+    webViewLoading.value = false;
+    webViewError.value = null;
     webViewVisible.value = true;
     roomId.value = null;
     _lastPromptedRoom = null;
@@ -53,7 +79,36 @@ class AppSearchController extends GetxController {
   }
 
   Future<void> reloadWebView() async {
+    startLoading();
     await webViewController?.reload();
+  }
+
+  void startLoading() {
+    webViewLoading.value = true;
+    webViewError.value = null;
+    _loadTimer?.cancel();
+    _loadTimer = Timer(const Duration(seconds: 20), () {
+      if (webViewLoading.value) {
+        webViewLoading.value = false;
+        webViewError.value = '网页加载超时，请点击右上角刷新重试';
+      }
+    });
+  }
+
+  void finishLoading() {
+    _loadTimer?.cancel();
+    webViewLoading.value = false;
+  }
+
+  void failLoading(String message) {
+    finishLoading();
+    webViewError.value = message;
+  }
+
+  @override
+  void onClose() {
+    _loadTimer?.cancel();
+    super.onClose();
   }
 
   Future<bool> openPopup(CreateWindowAction action) async {

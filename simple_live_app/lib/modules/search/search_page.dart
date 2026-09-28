@@ -53,21 +53,33 @@ class SearchPage extends GetView<AppSearchController> {
       body: Obx(() {
         final site = controller.selectedSite.value;
         if (site == null) return _platformPicker(context);
-        return Offstage(
-          offstage: !controller.webViewVisible.value,
-          child: InAppWebView(
-            key: ValueKey(site.id),
-            initialUrlRequest: URLRequest(
-              url: WebUri(SearchRoomUrl.homeUriFor(site.id).toString()),
-            ),
-            initialSettings: InAppWebViewSettings(
-              javaScriptCanOpenWindowsAutomatically: true,
-              supportMultipleWindows: true,
-            ),
-            initialUserScripts: site.id == Constant.kDouyin
-                ? UnmodifiableListView([
-                    UserScript(
-                      source: '''
+        return FutureBuilder<WebViewEnvironment?>(
+          future: controller.webViewEnvironment,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return const Center(child: Text('网页组件启动失败，请重启应用后重试'));
+            }
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            return Stack(
+              children: [
+                Offstage(
+                  offstage: !controller.webViewVisible.value,
+                  child: InAppWebView(
+                    key: ValueKey(site.id),
+                    webViewEnvironment: snapshot.data,
+                    initialUrlRequest: URLRequest(
+                      url: WebUri(SearchRoomUrl.homeUriFor(site.id).toString()),
+                    ),
+                    initialSettings: InAppWebViewSettings(
+                      javaScriptCanOpenWindowsAutomatically: true,
+                      supportMultipleWindows: true,
+                    ),
+                    initialUserScripts: site.id == Constant.kDouyin
+                        ? UnmodifiableListView([
+                            UserScript(
+                              source: '''
                       document.addEventListener('click', function(event) {
                         var target = event.target;
                         if (!(target instanceof Element)) return;
@@ -78,36 +90,78 @@ class SearchPage extends GetView<AppSearchController> {
                         }
                       }, true);
                     ''',
-                      injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
-                      forMainFrameOnly: true,
-                    ),
-                  ])
-                : null,
-            onWebViewCreated: (webViewController) {
-              controller.webViewController = webViewController;
-              controller.onRoomDetected = _showRoomPrompt;
-              if (site.id == Constant.kDouyin) {
-                webViewController.addJavaScriptHandler(
-                  handlerName: 'simpleLiveDouyinRoom',
-                  callback: (args) {
-                    if (controller.selectedSite.value?.id == site.id &&
-                        args.isNotEmpty &&
-                        args.first is String) {
-                      final uri = Uri.tryParse(args.first as String);
-                      if (uri != null &&
-                          SearchRoomUrl.roomIdFor(site.id, uri) != null) {
-                        controller.updateUrl(uri);
+                              injectionTime:
+                                  UserScriptInjectionTime.AT_DOCUMENT_START,
+                              forMainFrameOnly: true,
+                            ),
+                          ])
+                        : null,
+                    onWebViewCreated: (webViewController) {
+                      controller.webViewController = webViewController;
+                      controller.onRoomDetected = _showRoomPrompt;
+                      if (site.id == Constant.kDouyin) {
+                        webViewController.addJavaScriptHandler(
+                          handlerName: 'simpleLiveDouyinRoom',
+                          callback: (args) {
+                            if (controller.selectedSite.value?.id == site.id &&
+                                args.isNotEmpty &&
+                                args.first is String) {
+                              final uri = Uri.tryParse(args.first as String);
+                              if (uri != null &&
+                                  SearchRoomUrl.roomIdFor(site.id, uri) !=
+                                      null) {
+                                controller.updateUrl(uri);
+                              }
+                            }
+                          },
+                        );
                       }
-                    }
-                  },
-                );
-              }
-            },
-            onLoadStart: (_, uri) => controller.updateUrl(uri),
-            onLoadStop: (_, uri) => controller.updateUrl(uri),
-            onUpdateVisitedHistory: (_, uri, __) => controller.updateUrl(uri),
-            onCreateWindow: (_, action) => controller.openPopup(action),
-          ),
+                    },
+                    onLoadStart: (_, uri) {
+                      controller.startLoading();
+                      controller.updateUrl(uri);
+                    },
+                    onLoadStop: (_, uri) {
+                      controller.finishLoading();
+                      controller.updateUrl(uri);
+                    },
+                    onReceivedError: (_, request, __) {
+                      if (request.isForMainFrame == true) {
+                        controller.failLoading('网页加载失败，请点击右上角刷新重试');
+                      }
+                    },
+                    onUpdateVisitedHistory: (_, uri, __) =>
+                        controller.updateUrl(uri),
+                    onCreateWindow: (_, action) => controller.openPopup(action),
+                  ),
+                ),
+                Obx(() {
+                  if (!controller.webViewVisible.value) {
+                    return const SizedBox.shrink();
+                  }
+                  final error = controller.webViewError.value;
+                  if (error != null) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(error),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: controller.reloadWebView,
+                            child: const Text('重新加载'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                  return controller.webViewLoading.value
+                      ? const Center(child: CircularProgressIndicator())
+                      : const SizedBox.shrink();
+                }),
+              ],
+            );
+          },
         );
       }),
       bottomNavigationBar: Obx(() {

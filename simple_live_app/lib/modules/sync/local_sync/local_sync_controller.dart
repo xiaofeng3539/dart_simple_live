@@ -84,7 +84,7 @@ class LocalSyncController extends BaseController {
       showPickerAddress(addressList);
     } else {
       addressController.text = result;
-      //connect();
+      connect();
     }
   }
 
@@ -99,7 +99,7 @@ class LocalSyncController extends BaseController {
             onTap: () {
               Get.back();
               addressController.text = addressList[i];
-              // connect();
+              connect();
             },
           );
         },

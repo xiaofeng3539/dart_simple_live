@@ -65,7 +65,7 @@ class SyncService extends GetxService {
       if (data["type"] == "hello") {
         //如果http服务已经启动，就回复自己的信息
         if (httpRunning.value) {
-          sendInfo();
+          sendInfo(datagram.address, datagram.port);
         }
         return;
       }
@@ -103,8 +103,8 @@ class SyncService extends GetxService {
     Log.i("send udp: hello");
   }
 
-  /// UDP广播自身信息
-  void sendInfo() async {
+  /// 向发现请求的设备回复自身信息
+  void sendInfo(InternetAddress address, int port) async {
     //var ip = await getLocalIP();
 
     var name = await getDeviceName();
@@ -120,9 +120,7 @@ class SyncService extends GetxService {
 
     await udp!.send(
       json.encode(data).codeUnits,
-      Endpoint.broadcast(
-        port: const Port(udpPort),
-      ),
+      Endpoint.unicast(address, port: Port(port)),
     );
     Log.i("send udp info: $data");
   }
@@ -198,21 +196,21 @@ class SyncService extends GetxService {
       serverRouter.post('/sync/blocked_word', _syncBlockedWordReuqest);
       serverRouter.post('/sync/account/bilibili', _syncBiliAccountReuqest);
 
-      var server = await shelf_io.serve(
-        serverRouter,
+      server = await shelf_io.serve(
+        serverRouter.call,
         InternetAddress.anyIPv4,
         httpPort,
       );
 
       // Enable content compression
-      server.autoCompress = true;
+      server!.autoCompress = true;
 
       httpRunning.value = true;
 
       var ip = await getLocalIP();
       ipAddress.value = ip;
 
-      Log.d('Serving at http://$ip:${server.port}');
+      Log.d('Serving at http://$ip:${server!.port}');
     } catch (e) {
       httpErrorMsg.value = e.toString();
       Log.logPrint(e);
@@ -274,10 +272,11 @@ class SyncService extends GetxService {
   }
 
   /// 同步标签列表
-  Future<shelf.Response> _syncFollowUserTagRequest(shelf.Request request) async {
+  Future<shelf.Response> _syncFollowUserTagRequest(
+      shelf.Request request) async {
     try {
       var overlay =
-      int.parse(request.requestedUri.queryParameters['overlay'] ?? '0');
+          int.parse(request.requestedUri.queryParameters['overlay'] ?? '0');
 
       var body = await request.readAsString();
       Log.d('_syncFollowUserTagRequest: $body');

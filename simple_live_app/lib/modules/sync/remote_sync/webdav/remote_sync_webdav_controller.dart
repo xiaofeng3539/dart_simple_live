@@ -228,24 +228,49 @@ class RemoteSyncWebDAVController extends BaseController {
   // webDAV恢复到本地
   void doWebDAVRecovery() async {
     SmartDialog.showLoading(msg: "正在恢复到本地");
-    final data = await davClient.recovery();
-    final archive = await Isolate.run<Archive>(() {
-      final zipDecoder = ZipDecoder();
-      return zipDecoder.decodeBytes(data);
-    });
-    for (ArchiveFile file in archive) {
-      await _recovery(file);
+    try {
+      final data = await davClient.recovery();
+      final archive = await Isolate.run<Archive>(() {
+        final zipDecoder = ZipDecoder();
+        return zipDecoder.decodeBytes(data);
+      });
+      if (isSyncFollows.value &&
+          !archive.any((file) => file.name == _userFollowJsonName)) {
+        throw const FormatException('备份中缺少关注列表');
+      }
+      var skippedCount = 0;
+      var failedCount = 0;
+      for (ArchiveFile file in archive) {
+        try {
+          skippedCount += await _recovery(file);
+        } catch (e) {
+          failedCount++;
+          Log.e('恢复文件${file.name}失败: $e', StackTrace.current);
+        }
+      }
+      SmartDialog.dismiss();
+      if (failedCount > 0 || skippedCount > 0) {
+        SmartDialog.showToast('部分恢复：$failedCount 个文件失败，$skippedCount 条数据跳过');
+        return;
+      }
+      SmartDialog.showToast('同步完成');
+      DateTime recoverTime = DateTime.now();
+      lastRecoverTime.value = Utils.parseTime(recoverTime);
+      LocalStorageService.instance.setValue(
+          LocalStorageService.kWebDAVLastRecoverTime,
+          recoverTime.millisecondsSinceEpoch);
+    } catch (e) {
+      // 下载或解压失败时不清空本地数据，提示真实错误信息
+      Log.e('恢复到本地失败: $e', StackTrace.current);
+      SmartDialog.dismiss();
+      SmartDialog.showToast('恢复失败：$e');
     }
-    SmartDialog.dismiss();
-    SmartDialog.showToast('同步完成');
-    DateTime recoverTime = DateTime.now();
-    lastRecoverTime.value = Utils.parseTime(recoverTime);
-    LocalStorageService.instance.setValue(
-        LocalStorageService.kWebDAVLastRecoverTime,
-        recoverTime.millisecondsSinceEpoch);
   }
 
-  Future<void> _recovery(ArchiveFile file) async {
+  // 恢复单个备份文件，返回无法识别已跳过的条目数量
+  Future<int> _recovery(ArchiveFile file) async {
+    // 记录该文件中无法识别已跳过的条目数量
+    var skippedCount = 0;
     if (file.isFile && file.name.endsWith('.json')) {
       var jsonString = utf8.decode(file.content);
       var jsonData = json.decode(jsonString)['data'];
@@ -253,20 +278,42 @@ class RemoteSyncWebDAVController extends BaseController {
       if (file.name == _userFollowJsonName && isSyncFollows.value) {
         // 当前云优先
         try {
-          // 清空本地关注列表
-          await DBService.instance.followBox.clear();
+          // 先把所有条目解析到内存，单条解析失败跳过并计数，不中断整批
+          var users = <FollowUser>[];
           for (var item in jsonData) {
-            var user = FollowUser.fromJson(item);
+            try {
+              users.add(FollowUser.fromJson(item));
+            } catch (e) {
+              skippedCount++;
+              Log.e('解析关注用户条目失败，已跳过: $e', StackTrace.current);
+            }
+          }
+          if (skippedCount > 0) {
+            throw FormatException('关注列表有 $skippedCount 条无效数据，已保留本地列表');
+          }
+          // 整批解析完成后才清空本地关注列表再插入
+          await DBService.instance.followBox.clear();
+          for (var user in users) {
             await DBService.instance.followBox.put(user.id, user);
           }
           Log.i('已同步关注用户列表');
         } catch (e) {
           Log.e('同步关注用户列表失败: $e', StackTrace.current);
+          rethrow;
         }
       } else if (file.name == _userHistoriesJsonName && isSyncHistories.value) {
         try {
+          // 先把所有条目解析到内存，单条解析失败跳过并计数，不中断整批
+          var histories = <History>[];
           for (var item in jsonData) {
-            var history = History.fromJson(item);
+            try {
+              histories.add(History.fromJson(item));
+            } catch (e) {
+              skippedCount++;
+              Log.e('解析历史记录条目失败，已跳过: $e', StackTrace.current);
+            }
+          }
+          for (var history in histories) {
             if (DBService.instance.historyBox.containsKey(history.id)) {
               var old = DBService.instance.historyBox.get(history.id);
               //如果本地的更新时间比较新，就不更新
@@ -279,16 +326,23 @@ class RemoteSyncWebDAVController extends BaseController {
           Log.i('已同步用户观看历史记录');
         } catch (e) {
           Log.e('同步用户观看历史记录失败: $e', StackTrace.current);
+          rethrow;
         }
       } else if (file.name == _userBlockedWordJsonName &&
           isSyncBlockWord.value) {
         try {
           for (var keyword in jsonData) {
-            AppSettingsController.instance.addShieldList(keyword.trim());
+            try {
+              AppSettingsController.instance.addShieldList(keyword.trim());
+            } catch (e) {
+              skippedCount++;
+              Log.e('解析屏蔽词条目失败，已跳过: $e', StackTrace.current);
+            }
           }
           Log.i('已同步用户屏蔽词');
         } catch (e) {
           Log.e('同步用户屏蔽词失败:$e', StackTrace.current);
+          rethrow;
         }
       } else if (file.name == _userBilibiliAccountJsonName &&
           isSyncBilibiliAccount.value) {
@@ -299,22 +353,38 @@ class RemoteSyncWebDAVController extends BaseController {
           Log.i('已同步哔哩哔哩账号');
         } catch (e) {
           Log.e('同步哔哩哔哩账号失败：$e', StackTrace.current);
+          rethrow;
         }
       } else if (file.name == _userSettingsJsonName) {
         try {
+          // 先把数据复制到内存，避免清空后写入失败导致数据丢失
+          var settings = Map<String, dynamic>.from(jsonData);
           await LocalStorageService.instance.settingsBox.clear();
-          LocalStorageService.instance.settingsBox.putAll(jsonData);
+          await LocalStorageService.instance.settingsBox.putAll(settings);
           Log.i('已同步用户设置');
         } catch (e) {
           Log.e("同步用户设置失败：$e", StackTrace.current);
+          rethrow;
         }
       } else if (file.name == _userTagsJsonName && isSyncFollows.value) {
         try {
           // 标签功能和关注具有依赖关系，必须同时同步
-          // 清空本地标签列表
-          await DBService.instance.tagBox.clear();
+          // 先把所有条目解析到内存，单条解析失败跳过并计数，不中断整批
+          var tags = <FollowUserTag>[];
           for (var item in jsonData) {
-            var tag = FollowUserTag.fromJson(item);
+            try {
+              tags.add(FollowUserTag.fromJson(item));
+            } catch (e) {
+              skippedCount++;
+              Log.e('解析标签条目失败，已跳过: $e', StackTrace.current);
+            }
+          }
+          if (skippedCount > 0) {
+            throw FormatException('关注标签有 $skippedCount 条无效数据，已保留本地标签');
+          }
+          // 整批解析完成后才清空本地标签列表再插入
+          await DBService.instance.tagBox.clear();
+          for (var tag in tags) {
             await DBService.instance.tagBox.put(tag.id, tag);
             // 插入之后验证
             var insertedTag = DBService.instance.tagBox.get(tag.id);
@@ -324,13 +394,15 @@ class RemoteSyncWebDAVController extends BaseController {
           Log.i('已同步用户自定义标签');
         } catch (e) {
           Log.e('同步用户自定义标签失败:$e', StackTrace.current);
+          rethrow;
         }
       } else {
-        return;
+        return skippedCount;
       }
     } else {
       Log.i('不是正确的文件名');
     }
+    return skippedCount;
   }
 
   // ui控制--密码可见控制

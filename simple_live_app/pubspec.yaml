@@ -49,7 +49,7 @@ dependencies:
   share_plus: ^12.0.1 #分享
   path_provider: ^2.1.5 #常用路径
   cross_file: ^0.3.5 #跨平台文件
-  permission_handler: ^13.0.2 #权限处理
+  permission_handler: ^12.0.3 #权限处理
   image_gallery_saver_plus: ^5.1.1 #图片保存到相册
   screen_brightness: ^2.1.7 #亮度控制
   auto_orientation_v2: ^2.3.6 #屏幕方向
