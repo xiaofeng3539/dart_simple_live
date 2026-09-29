@@ -1,9 +1,10 @@
 <p align="center"><img width="128" src="assets/logo.png" alt="Simple Live 图标"></p>
 
 <h1 align="center">Simple Live</h1>
-<h1 align="center">我也是重度直播用户，会持续完善这个项目；更新和修复时间不固定。</h1>
 
 <p align="center">简简单单看直播 · 支持哔哩哔哩、虎牙、斗鱼、抖音</p>
+
+<p align="center"><small>一个重度直播用户做的小项目 · 更新和修复时间不固定</small></p>
 
 <p align="center"><a href="https://github.com/xiaofeng3539/dart_simple_live/releases/tag/v1.11.4">下载正式版 v1.11.4</a> · <a href="CHANGELOG.md">版本记录</a> · <a href="LICENSE">开源许可</a></p>
 
