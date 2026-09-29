@@ -56,7 +56,7 @@ Windows 构建需要桌面开发工具；Android 构建需要 Android SDK 和 JD
 
 如果这个项目对你有帮助，可以自愿使用以下微信收款码支持开发。捐款不影响软件功能或问题反馈。
 
-<p align="center"><img width="320" src="assets/donate_wechat.jpg" alt="微信捐款码"></p>
+<p align="center"><img width="208" src="assets/donate_wechat_qr.png" alt="微信捐款码"></p>
 
 ## 参考与致谢
 
