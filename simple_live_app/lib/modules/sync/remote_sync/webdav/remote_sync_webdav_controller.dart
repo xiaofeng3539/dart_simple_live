@@ -272,7 +272,6 @@ class RemoteSyncWebDAVController extends BaseController {
       var jsonData = json.decode(jsonString)['data'];
       // 同步follows
       if (file.name == _userFollowJsonName && isSyncFollows.value) {
-        // 当前云优先
         try {
           // 先把所有条目解析到内存，单条解析失败跳过并计数，不中断整批
           var users = <FollowUser>[];
@@ -287,10 +286,10 @@ class RemoteSyncWebDAVController extends BaseController {
           if (skippedCount > 0) {
             throw FormatException('关注列表有 $skippedCount 条无效数据，已保留本地列表');
           }
-          // 整批解析完成后才清空本地关注列表再插入
-          await DBService.instance.followBox.clear();
           for (var user in users) {
-            await DBService.instance.followBox.put(user.id, user);
+            if (!DBService.instance.followBox.containsKey(user.id)) {
+              await DBService.instance.followBox.put(user.id, user);
+            }
           }
           Log.i('已同步关注用户列表');
         } catch (e) {
@@ -310,14 +309,9 @@ class RemoteSyncWebDAVController extends BaseController {
             }
           }
           for (var history in histories) {
-            if (DBService.instance.historyBox.containsKey(history.id)) {
-              var old = DBService.instance.historyBox.get(history.id);
-              //如果本地的更新时间比较新，就不更新
-              if (old!.updateTime.isAfter(history.updateTime)) {
-                continue;
-              }
+            if (!DBService.instance.historyBox.containsKey(history.id)) {
+              await DBService.instance.addOrUpdateHistory(history);
             }
-            await DBService.instance.addOrUpdateHistory(history);
           }
           Log.i('已同步用户观看历史记录');
         } catch (e) {
@@ -344,8 +338,12 @@ class RemoteSyncWebDAVController extends BaseController {
           isSyncBilibiliAccount.value) {
         try {
           var cookie = jsonData['cookie'];
-          BiliBiliAccountService.instance.setCookie(cookie);
-          BiliBiliAccountService.instance.loadUserInfo();
+          if (BiliBiliAccountService.instance.cookie.isEmpty &&
+              cookie is String &&
+              cookie.isNotEmpty) {
+            BiliBiliAccountService.instance.setCookie(cookie);
+            BiliBiliAccountService.instance.loadUserInfo();
+          }
           Log.i('已同步哔哩哔哩账号');
         } catch (e) {
           Log.e('同步哔哩哔哩账号失败：$e', StackTrace.current);
@@ -353,10 +351,14 @@ class RemoteSyncWebDAVController extends BaseController {
         }
       } else if (file.name == _userSettingsJsonName) {
         try {
-          // 先把数据复制到内存，避免清空后写入失败导致数据丢失
           var settings = Map<String, dynamic>.from(jsonData);
-          await LocalStorageService.instance.settingsBox.clear();
-          await LocalStorageService.instance.settingsBox.putAll(settings);
+          for (var entry in settings.entries) {
+            if (!LocalStorageService.instance.settingsBox
+                .containsKey(entry.key)) {
+              await LocalStorageService.instance.settingsBox
+                  .put(entry.key, entry.value);
+            }
+          }
           Log.i('已同步用户设置');
         } catch (e) {
           Log.e("同步用户设置失败：$e", StackTrace.current);
@@ -378,13 +380,10 @@ class RemoteSyncWebDAVController extends BaseController {
           if (skippedCount > 0) {
             throw FormatException('关注标签有 $skippedCount 条无效数据，已保留本地标签');
           }
-          // 整批解析完成后才清空本地标签列表再插入
-          await DBService.instance.tagBox.clear();
           for (var tag in tags) {
-            await DBService.instance.tagBox.put(tag.id, tag);
-            // 插入之后验证
-            var insertedTag = DBService.instance.tagBox.get(tag.id);
-            Log.i('Inserted tag: ${insertedTag?.tag}');
+            if (!DBService.instance.tagBox.containsKey(tag.id)) {
+              await DBService.instance.tagBox.put(tag.id, tag);
+            }
           }
           EventBus.instance.emit(Constant.kUpdateFollow, 0);
           Log.i('已同步用户自定义标签');

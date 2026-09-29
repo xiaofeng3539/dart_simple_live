@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -17,11 +18,16 @@ import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/signalr_service.dart';
+import 'package:simple_live_app/services/sync_service.dart';
 
 class RemoteSyncRoomController extends BaseController {
   final String roomId;
+  final List<String> relayAddresses;
   final SignalRService signalR = SignalRService();
-  RemoteSyncRoomController(this.roomId) {
+  RemoteSyncRoomController(String code)
+      : roomId = code.split('|').first,
+        relayAddresses =
+            code.contains('|') ? code.split('|').last.split(';') : const [] {
     if (roomId.isNotEmpty) {
       currentRoomId.value = roomId;
     }
@@ -34,6 +40,14 @@ class RemoteSyncRoomController extends BaseController {
   StreamSubscription? _onBiliAccountSubscription;
   var currentRoomId = "--".obs;
   RxList<RoomUser> roomUsers = <RoomUser>[].obs;
+  bool _qrSheetOpen = false;
+  Set<String> _qrKnownUserIds = {};
+
+  static String _userId(RoomUser user) =>
+      user.connectionId.isNotEmpty ? user.connectionId : user.shortId;
+
+  static bool hasNewRemoteUser(Set<String> knownIds, List<RoomUser> users) =>
+      users.any((user) => !user.isSelf && !knownIds.contains(_userId(user)));
 
   Timer? _timer;
   var countDown = 600.obs;
@@ -47,7 +61,7 @@ class RemoteSyncRoomController extends BaseController {
 
   void connect() async {
     try {
-      await signalR.connect();
+      await signalR.connect(relayAddresses: relayAddresses);
       if (isClosed) return;
       if (signalR.state == SignalRConnectionState.connected) {
         if (roomId.isEmpty) {
@@ -131,11 +145,8 @@ class RemoteSyncRoomController extends BaseController {
       SmartDialog.showToast("房间已被销毁");
       Get.back();
     });
-    _roomUserUpdatedSubscription = signalR.onRoomUserUpdatedStream.listen(
-      (roomUsers) {
-        this.roomUsers.assignAll(roomUsers);
-      },
-    );
+    _roomUserUpdatedSubscription =
+        signalR.onRoomUserUpdatedStream.listen(onRoomUsersUpdated);
     _onFavoriteSubscription = signalR.onFavoriteStream.listen((data) {
       onReceiveFavorite(data.$1, data.$2);
     });
@@ -150,17 +161,24 @@ class RemoteSyncRoomController extends BaseController {
     });
   }
 
+  void onRoomUsersUpdated(List<RoomUser> users) {
+    final closeQr = _qrSheetOpen && hasNewRemoteUser(_qrKnownUserIds, users);
+    roomUsers.assignAll(users);
+    if (closeQr) {
+      _qrSheetOpen = false;
+      Navigator.of(Get.context!).pop();
+    }
+  }
+
   void onReceiveFavorite(bool overlay, String data) async {
     try {
       var jsonBody = json.decode(data);
-      if (overlay) {
-        await DBService.instance.followBox.clear();
-      }
       for (var item in jsonBody) {
         var user = FollowUser.fromJson(item);
-        await DBService.instance.followBox.put(user.id, user);
+        if (!DBService.instance.followBox.containsKey(user.id)) {
+          await DBService.instance.followBox.put(user.id, user);
+        }
       }
-      SmartDialog.showToast('已同步关注用户列表');
       EventBus.instance.emit(Constant.kUpdateFollow, 0);
       SmartDialog.showToast("已同步关注列表");
     } catch (e) {
@@ -172,19 +190,11 @@ class RemoteSyncRoomController extends BaseController {
   void onReceiveHistory(bool overlay, String data) async {
     try {
       var jsonBody = json.decode(data);
-      if (overlay) {
-        await DBService.instance.historyBox.clear();
-      }
       for (var item in jsonBody) {
         var history = History.fromJson(item);
-        if (DBService.instance.historyBox.containsKey(history.id)) {
-          var old = DBService.instance.historyBox.get(history.id);
-          //如果本地的更新时间比较新，就不更新
-          if (old!.updateTime.isAfter(history.updateTime)) {
-            continue;
-          }
+        if (!DBService.instance.historyBox.containsKey(history.id)) {
+          await DBService.instance.addOrUpdateHistory(history);
         }
-        await DBService.instance.addOrUpdateHistory(history);
       }
       SmartDialog.showToast('已同步历史记录');
       EventBus.instance.emit(Constant.kUpdateHistory, 0);
@@ -197,9 +207,6 @@ class RemoteSyncRoomController extends BaseController {
   void onReceiveShieldWord(bool overlay, String data) async {
     try {
       var jsonBody = json.decode(data);
-      if (overlay) {
-        AppSettingsController.instance.clearShieldList();
-      }
       for (var item in jsonBody) {
         // add to Hive
         AppSettingsController.instance.addShieldList(item);
@@ -215,23 +222,17 @@ class RemoteSyncRoomController extends BaseController {
     try {
       var jsonBody = json.decode(data);
       var cookie = jsonBody['cookie'];
-      BiliBiliAccountService.instance.setCookie(cookie);
-      BiliBiliAccountService.instance.loadUserInfo();
-      SmartDialog.showToast('已同步哔哩哔哩账号');
+      if (BiliBiliAccountService.instance.cookie.isEmpty &&
+          cookie is String &&
+          cookie.isNotEmpty) {
+        BiliBiliAccountService.instance.setCookie(cookie);
+        BiliBiliAccountService.instance.loadUserInfo();
+        SmartDialog.showToast('已同步哔哩哔哩账号');
+      }
     } catch (e) {
       SmartDialog.showToast("同步失败:$e");
       Log.logPrint(e);
     }
-  }
-
-  Future<bool> showOverlayDialog() async {
-    var overlay = await Utils.showAlertDialog(
-      "是否覆盖远端数据？",
-      title: "数据覆盖",
-      confirm: "覆盖",
-      cancel: "不覆盖",
-    );
-    return overlay;
   }
 
   void syncFollow() async {
@@ -241,7 +242,6 @@ class RemoteSyncRoomController extends BaseController {
         return;
       }
 
-      var overlay = await showOverlayDialog();
       SmartDialog.showLoading(msg: "发送中...");
       var users = DBService.instance.getFollowList();
       var data = json.encode(users.map((e) => e.toJson()).toList());
@@ -249,7 +249,7 @@ class RemoteSyncRoomController extends BaseController {
       var resp = await signalR.sendContent(
         roomName: currentRoomId.value,
         action: "SendFavorite",
-        overlay: overlay,
+        overlay: false,
         content: data,
       );
       if (resp.isSuccess) {
@@ -271,14 +271,13 @@ class RemoteSyncRoomController extends BaseController {
         SmartDialog.showToast("无设备连接");
         return;
       }
-      var overlay = await showOverlayDialog();
       SmartDialog.showLoading(msg: "发送中...");
       var histores = DBService.instance.getHistores();
       var data = json.encode(histores.map((e) => e.toJson()).toList());
       var resp = await signalR.sendContent(
         roomName: currentRoomId.value,
         action: "SendHistory",
-        overlay: overlay,
+        overlay: false,
         content: data,
       );
       if (resp.isSuccess) {
@@ -300,7 +299,6 @@ class RemoteSyncRoomController extends BaseController {
         SmartDialog.showToast("无设备连接");
         return;
       }
-      var overlay = await showOverlayDialog();
       SmartDialog.showLoading(msg: "发送中...");
       var shieldList = AppSettingsController.instance.shieldList;
       var data = json.encode(shieldList.toList());
@@ -308,7 +306,7 @@ class RemoteSyncRoomController extends BaseController {
       var resp = await signalR.sendContent(
         roomName: currentRoomId.value,
         action: "SendShieldWord",
-        overlay: overlay,
+        overlay: false,
         content: data,
       );
       if (resp.isSuccess) {
@@ -339,7 +337,7 @@ class RemoteSyncRoomController extends BaseController {
       var resp = await signalR.sendContent(
         roomName: currentRoomId.value,
         action: "SendBiliAccount",
-        overlay: true,
+        overlay: false,
         content: json.encode({
           "cookie": BiliBiliAccountService.instance.cookie,
         }),
@@ -358,16 +356,26 @@ class RemoteSyncRoomController extends BaseController {
   }
 
   void showQRInfo() {
+    if (_qrSheetOpen) return;
+    _qrKnownUserIds = roomUsers.map(_userId).toSet();
+    _qrSheetOpen = true;
     Utils.showBottomSheet(
       title: "房间信息",
       child: Column(
         children: [
           QrImageView(
-            data: currentRoomId.value,
+            data: roomId.isEmpty &&
+                    (Platform.isWindows ||
+                        Platform.isMacOS ||
+                        Platform.isLinux) &&
+                    SyncService.instance.ipAddress.value.isNotEmpty
+                ? '${currentRoomId.value}|${SyncService.instance.ipAddress.value}'
+                : currentRoomId.value,
             version: QrVersions.auto,
             backgroundColor: Colors.white,
-            padding: AppStyle.edgeInsetsA12,
-            size: 200,
+            padding: const EdgeInsets.all(16),
+            errorCorrectionLevel: QrErrorCorrectLevel.M,
+            size: 300,
           ),
           AppStyle.vGap24,
           Text(
@@ -381,7 +389,10 @@ class RemoteSyncRoomController extends BaseController {
           ),
         ],
       ),
-    );
+    ).whenComplete(() {
+      _qrSheetOpen = false;
+      _qrKnownUserIds.clear();
+    });
   }
 
   @override

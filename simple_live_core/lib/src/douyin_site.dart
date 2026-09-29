@@ -252,12 +252,16 @@ class DouyinSite implements LiveSite {
     // webRid是固定的，用户每次开播都是同一个webRid
     // webRid一般长度为11-12位，例如：416144012050
     // 这里简单进行判断，如果roomId长度小于15，则认为是webRid
-    if (roomId.length <= 16) {
-      var webRid = roomId;
-      return await getRoomDetailByWebRid(webRid);
+    Future<LiveRoomDetail> load() => roomId.length <= 16
+        ? getRoomDetailByWebRid(roomId)
+        : getRoomDetailByRoomId(roomId);
+    try {
+      return await load();
+    } catch (e) {
+      CoreLog.error(e);
+      await Future.delayed(const Duration(milliseconds: 400));
+      return load();
     }
-
-    return await getRoomDetailByRoomId(roomId);
   }
 
   /// 通过roomId获取直播间信息
@@ -382,8 +386,9 @@ class DouyinSite implements LiveSite {
   Future<LiveRoomDetail> _getRoomDetailByWebRidHtml(String webRid) async {
     var roomData = await _getRoomDataByHtml(webRid);
     var roomId = roomData["roomStore"]["roomInfo"]["room"]["id_str"].toString();
-    var userUniqueId = roomData["userStore"]["odin"]["user_unique_id"]
-        .toString();
+    var userUniqueId =
+        roomData["userStore"]?["odin"]?["user_unique_id"]?.toString() ??
+        generateRandomNumber(12).toString();
 
     var room = roomData["roomStore"]["roomInfo"]["room"];
     var owner = room["owner"];

@@ -268,18 +268,14 @@ class SyncService extends GetxService {
   /// 同步关注用户列表
   Future<shelf.Response> _syncFollowUserReuqest(shelf.Request request) async {
     try {
-      var overlay =
-          int.parse(request.requestedUri.queryParameters['overlay'] ?? '0');
-
       var body = await request.readAsString();
       Log.d('_syncFollowUserReuqest: $body');
       var jsonBody = json.decode(body);
-      if (overlay == 1) {
-        await DBService.instance.followBox.clear();
-      }
       for (var item in jsonBody) {
         var user = FollowUser.fromJson(item);
-        await DBService.instance.followBox.put(user.id, user);
+        if (!DBService.instance.followBox.containsKey(user.id)) {
+          await DBService.instance.followBox.put(user.id, user);
+        }
       }
 
       SmartDialog.showToast('已同步关注用户列表');
@@ -300,18 +296,23 @@ class SyncService extends GetxService {
   Future<shelf.Response> _syncFollowUserTagRequest(
       shelf.Request request) async {
     try {
-      var overlay =
-          int.parse(request.requestedUri.queryParameters['overlay'] ?? '0');
-
       var body = await request.readAsString();
       Log.d('_syncFollowUserTagRequest: $body');
       var jsonBody = json.decode(body);
-      if (overlay == 1) {
-        await DBService.instance.tagBox.clear();
-      }
       for (var item in jsonBody) {
         var tag = FollowUserTag.fromJson(item);
-        await DBService.instance.tagBox.put(tag.id, tag);
+        final localTag = DBService.instance.tagBox.get(tag.id);
+        if (localTag == null) {
+          await DBService.instance.tagBox.put(tag.id, tag);
+        } else {
+          final userIds = {...localTag.userId, ...tag.userId}.toList();
+          if (userIds.length != localTag.userId.length) {
+            await DBService.instance.tagBox.put(
+              tag.id,
+              localTag.copyWith(userId: userIds),
+            );
+          }
+        }
       }
 
       SmartDialog.showToast('已同步标签列表');
@@ -331,24 +332,14 @@ class SyncService extends GetxService {
   /// 同步观看记录
   Future<shelf.Response> _syncHistoryReuqest(shelf.Request request) async {
     try {
-      var overlay =
-          int.parse(request.requestedUri.queryParameters['overlay'] ?? '0');
       var body = await request.readAsString();
       Log.d('_syncFollowUserReuqest: $body');
       var jsonBody = json.decode(body);
-      if (overlay == 1) {
-        await DBService.instance.historyBox.clear();
-      }
       for (var item in jsonBody) {
         var history = History.fromJson(item);
-        if (DBService.instance.historyBox.containsKey(history.id)) {
-          var old = DBService.instance.historyBox.get(history.id);
-          //如果本地的更新时间比较新，就不更新
-          if (old!.updateTime.isAfter(history.updateTime)) {
-            continue;
-          }
+        if (!DBService.instance.historyBox.containsKey(history.id)) {
+          await DBService.instance.addOrUpdateHistory(history);
         }
-        await DBService.instance.addOrUpdateHistory(history);
       }
 
       SmartDialog.showToast('已同步观看记录');
@@ -368,14 +359,9 @@ class SyncService extends GetxService {
   /// 同步弹幕屏蔽词
   Future<shelf.Response> _syncBlockedWordReuqest(shelf.Request request) async {
     try {
-      var overlay =
-          int.parse(request.requestedUri.queryParameters['overlay'] ?? '0');
       var body = await request.readAsString();
       Log.d('_syncBlockedWordReuqest: $body');
       var jsonBody = json.decode(body);
-      if (overlay == 1) {
-        AppSettingsController.instance.clearShieldList();
-      }
       for (var keyword in jsonBody) {
         AppSettingsController.instance.addShieldList(keyword.trim());
       }
@@ -399,9 +385,13 @@ class SyncService extends GetxService {
       Log.d('_syncBiliAccountReuqest: $body');
       var jsonBody = json.decode(body);
       var cookie = jsonBody['cookie'];
-      BiliBiliAccountService.instance.setCookie(cookie);
-      BiliBiliAccountService.instance.loadUserInfo();
-      SmartDialog.showToast('已同步哔哩哔哩账号');
+      if (BiliBiliAccountService.instance.cookie.isEmpty &&
+          cookie is String &&
+          cookie.isNotEmpty) {
+        BiliBiliAccountService.instance.setCookie(cookie);
+        BiliBiliAccountService.instance.loadUserInfo();
+        SmartDialog.showToast('已同步哔哩哔哩账号');
+      }
       return toJsonResponse({
         'status': true,
         'message': 'success',

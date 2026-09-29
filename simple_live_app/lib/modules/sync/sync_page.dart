@@ -25,7 +25,9 @@ class SyncPage extends StatelessWidget {
                 if (result == null || result.isEmpty) {
                   return;
                 }
-                if (result.length == SignalRService.kRoomIdLength) {
+                final roomId = (result as String).split('|').first;
+                if (roomId.length == SignalRService.kRoomIdLength &&
+                    RegExp(r'^[a-zA-Z0-9]{6}$').hasMatch(roomId)) {
                   Get.toNamed(RoutePath.kRemoteSyncRoom, arguments: result);
                 } else {
                   Get.toNamed(RoutePath.kLocalSync, arguments: result);

@@ -51,12 +51,12 @@ class SignalRService {
   int _nextRequestId = 0;
   bool _disposed = false;
 
-  Future<void> connect() async {
+  Future<void> connect({List<String> relayAddresses = const []}) async {
     await disconnect();
     _setState(SignalRConnectionState.connecting);
     try {
       final socket = Platform.isAndroid || Platform.isIOS
-          ? await _connectMobile()
+          ? await _connectMobile(relayAddresses)
           : await WebSocket.connect(kUrl).timeout(const Duration(seconds: 15));
       _socket = socket;
       _subscription = socket.listen(
@@ -82,7 +82,7 @@ class SignalRService {
     }
   }
 
-  Future<WebSocket> _connectMobile() {
+  Future<WebSocket> _connectMobile(List<String> relayAddresses) {
     final result = Completer<WebSocket>();
     var failures = 0;
 
@@ -104,29 +104,43 @@ class SignalRService {
     }
 
     attempt(WebSocket.connect(kUrl).timeout(const Duration(seconds: 15)));
-    attempt(_connectViaLanRelay());
+    attempt(_connectViaLanRelay(relayAddresses));
     return result.future;
   }
 
-  Future<WebSocket> _connectViaLanRelay() async {
+  Future<WebSocket> _connectViaLanRelay(List<String> relayAddresses) async {
     final sync = SyncService.instance;
+    final tried = <String>{};
+    Future<WebSocket?> tryAddress(String rawAddress) async {
+      final address = rawAddress.trim();
+      if (InternetAddress.tryParse(address)?.type != InternetAddressType.IPv4 ||
+          !tried.add(address)) {
+        return null;
+      }
+      try {
+        return await WebSocket.connect(
+          'ws://$address:${SyncService.httpPort}/sync-relay',
+        ).timeout(const Duration(seconds: 2));
+      } catch (error) {
+        Log.logPrint('局域网同步转接失败 ($address)：$error');
+        return null;
+      }
+    }
+
+    for (final address in relayAddresses) {
+      final socket = await tryAddress(address);
+      if (socket != null) return socket;
+    }
     if (sync.udp == null) {
       throw const SocketException('远程服务不可达，局域网设备发现尚未启动');
     }
     sync.sendHello();
-    final tried = <String>{};
     final deadline = DateTime.now().add(const Duration(seconds: 5));
     while (DateTime.now().isBefore(deadline)) {
       for (final client in sync.scanClients.toList()) {
         if (!{'windows', 'macos', 'linux'}.contains(client.type)) continue;
-        if (!tried.add(client.address)) continue;
-        try {
-          return await WebSocket.connect(
-            'ws://${client.address}:${client.port}/sync-relay',
-          ).timeout(const Duration(seconds: 2));
-        } catch (error) {
-          Log.logPrint('局域网同步转接失败 (${client.address})：$error');
-        }
+        final socket = await tryAddress(client.address);
+        if (socket != null) return socket;
       }
       await Future.delayed(const Duration(milliseconds: 300));
     }
