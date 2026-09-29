@@ -1,4 +1,4 @@
-> 当前仓库发布源代码。Windows 可按下方步骤编译并打包为 ZIP；暂未提供 GitHub Release 安装包。
+
 
 
 <p align="center">
