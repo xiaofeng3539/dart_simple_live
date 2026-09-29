@@ -6,11 +6,11 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:get/get.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/search/search_room_url.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
-import 'package:simple_live_app/routes/route_path.dart';
 
 class AppSearchController extends GetxController {
   final selectedSite = Rxn<Site>();
@@ -29,12 +29,17 @@ class AppSearchController extends GetxController {
 
   Future<WebViewEnvironment?> _createWebViewEnvironment() async {
     if (!Platform.isWindows) return null;
-    final supportDir = await getApplicationSupportDirectory();
-    final profileDir = Directory(p.join(supportDir.path, 'search_webview'));
-    await profileDir.create(recursive: true);
-    return WebViewEnvironment.create(
-      settings: WebViewEnvironmentSettings(userDataFolder: profileDir.path),
-    );
+    try {
+      final supportDir = await getApplicationSupportDirectory();
+      final profileDir = Directory(p.join(supportDir.path, 'search_webview'));
+      await profileDir.create(recursive: true);
+      return await WebViewEnvironment.create(
+        settings: WebViewEnvironmentSettings(userDataFolder: profileDir.path),
+      );
+    } catch (error, stackTrace) {
+      Log.e('搜索页 WebView2 专用环境启动失败，改用默认环境：$error', stackTrace);
+      return null;
+    }
   }
 
   void selectSite(Site site) {
@@ -129,8 +134,7 @@ class AppSearchController extends GetxController {
       webViewVisible.value = false;
       await WidgetsBinding.instance.endOfFrame;
       try {
-        await Get.toNamed(RoutePath.kLiveRoomDetail,
-            arguments: site, parameters: {'roomId': id});
+        await AppNavigator.toLiveRoomDetail(site: site, roomId: id);
       } finally {
         if (!isClosed) {
           webViewVisible.value = true;

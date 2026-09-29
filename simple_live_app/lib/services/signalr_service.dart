@@ -3,13 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:simple_live_app/app/log.dart';
+import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/services/sync_service.dart';
 
 enum SignalRConnectionState { connecting, connected, disconnected }
 
 class SignalRService {
-  static const String kUrl =
-      'wss://simple-live-sync.3439394104.workers.dev/sync';
+  static const String kUrl = Constant.kRemoteSyncUrl;
   static const int kRoomIdLength = 6;
 
   SignalRConnectionState state = SignalRConnectionState.disconnected;
@@ -54,8 +55,9 @@ class SignalRService {
     await disconnect();
     _setState(SignalRConnectionState.connecting);
     try {
-      final socket =
-          await WebSocket.connect(kUrl).timeout(const Duration(seconds: 15));
+      final socket = Platform.isAndroid || Platform.isIOS
+          ? await _connectMobile()
+          : await WebSocket.connect(kUrl).timeout(const Duration(seconds: 15));
       _socket = socket;
       _subscription = socket.listen(
         _onMessage,
@@ -78,6 +80,57 @@ class SignalRService {
       _onClosed();
       rethrow;
     }
+  }
+
+  Future<WebSocket> _connectMobile() {
+    final result = Completer<WebSocket>();
+    var failures = 0;
+
+    void attempt(Future<WebSocket> connection) async {
+      try {
+        final socket = await connection;
+        if (result.isCompleted) {
+          await socket.close();
+        } else {
+          result.complete(socket);
+        }
+      } catch (error) {
+        Log.logPrint('同步连接尝试失败：$error');
+        failures++;
+        if (failures == 2 && !result.isCompleted) {
+          result.completeError(error);
+        }
+      }
+    }
+
+    attempt(WebSocket.connect(kUrl).timeout(const Duration(seconds: 15)));
+    attempt(_connectViaLanRelay());
+    return result.future;
+  }
+
+  Future<WebSocket> _connectViaLanRelay() async {
+    final sync = SyncService.instance;
+    if (sync.udp == null) {
+      throw const SocketException('远程服务不可达，局域网设备发现尚未启动');
+    }
+    sync.sendHello();
+    final tried = <String>{};
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (DateTime.now().isBefore(deadline)) {
+      for (final client in sync.scanClients.toList()) {
+        if (!{'windows', 'macos', 'linux'}.contains(client.type)) continue;
+        if (!tried.add(client.address)) continue;
+        try {
+          return await WebSocket.connect(
+            'ws://${client.address}:${client.port}/sync-relay',
+          ).timeout(const Duration(seconds: 2));
+        } catch (error) {
+          Log.logPrint('局域网同步转接失败 (${client.address})：$error');
+        }
+      }
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+    throw const SocketException('远程服务不可达，局域网内也未发现可用的同步转接设备');
   }
 
   void _setState(SignalRConnectionState value) {

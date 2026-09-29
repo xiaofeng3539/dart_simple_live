@@ -253,6 +253,7 @@ class DouyuSite implements LiveSite {
       url: "https://www.douyu.com/$roomId",
       isRecord: roomInfo["videoLoop"] == 1,
       showTime: showTime,
+      categoryId: roomInfo["cate_id"]?.toString(),
     );
   }
 

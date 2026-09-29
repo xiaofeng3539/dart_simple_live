@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:remixicon/remixicon.dart';
 
 class Constant {
+  static const String kRemoteSyncUrl =
+      'wss://simple-live-sync.3439394104.workers.dev/sync';
   static const String kUpdateFollow = "UpdateFollow";
   static const String kUpdateHistory = "UpdateHistory";
 

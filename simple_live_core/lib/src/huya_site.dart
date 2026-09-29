@@ -389,6 +389,8 @@ class HuyaSite implements LiveSite {
     var subSid = roomInfo["subSid"];
 
     return LiveRoomDetail(
+      categoryId: tLiveInfo["iGameId"]?.toString(),
+      categoryName: tLiveInfo["sGameFullName"]?.toString(),
       cover: tLiveInfo["sScreenshot"].toString(),
       online: tLiveInfo["lTotalCount"],
       roomId: tLiveInfo["lProfileRoom"].toString(),

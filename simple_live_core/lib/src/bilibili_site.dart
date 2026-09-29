@@ -300,6 +300,8 @@ class BiliBiliSite implements LiveSite {
         cookie: cookie,
       ),
       showTime: liveStartTime, // 将 liveStartTime 赋值给 showTime 字段
+      categoryId: roomInfo["room_info"]["area_id"]?.toString(),
+      categoryName: roomInfo["room_info"]["area_name"]?.toString(),
     );
   }
 

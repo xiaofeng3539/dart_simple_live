@@ -484,6 +484,23 @@ class DouyinSite implements LiveSite {
     return renderDataJson["state"];
   }
 
+  Future<LiveSubCategory?> getRoomGameCategory(String webRid) async {
+    final data = await _getRoomDataByHtml(webRid);
+    final roadMap = data["roomStore"]?["roomInfo"]?["partition_road_map"];
+    final parent = roadMap?["partition"];
+    final game = roadMap?["sub_partition"]?["partition"];
+    if (parent == null || game == null) return null;
+    final gameId = game["id_str"]?.toString() ?? "";
+    if (gameId.isEmpty) return null;
+    return LiveSubCategory(
+      id: '$gameId,${game["type"]}',
+      parentId: '${parent["id_str"]},${parent["type"]}',
+      name: game["title"]?.toString().isNotEmpty == true
+          ? game["title"].toString()
+          : parent["title"]?.toString() ?? "同类游戏",
+    );
+  }
+
   /// 通过webRid获取直播间Web信息
   /// - [webRid] 直播间RID
   Future<Map> _getRoomDataByApi(String webRid) async {

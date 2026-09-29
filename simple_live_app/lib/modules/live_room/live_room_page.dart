@@ -13,6 +13,7 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
+import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/desktop_refresh_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
@@ -25,8 +26,11 @@ import 'package:simple_live_app/widgets/settings/settings_switch.dart';
 import 'package:simple_live_app/widgets/superchat_card.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
-class LiveRoomPage extends GetView<LiveRoomController> {
-  const LiveRoomPage({Key? key}) : super(key: key);
+class LiveRoomPage extends StatelessWidget {
+  final String? roomTag;
+  const LiveRoomPage({super.key, this.roomTag});
+
+  LiveRoomController get controller => Get.find<LiveRoomController>(tag: roomTag);
 
   @override
   Widget build(BuildContext context) {
@@ -771,6 +775,11 @@ class LiveRoomPage extends GetView<LiveRoomController> {
 
   List<Widget> buildAppbarActions(BuildContext context) {
     return [
+      TextButton.icon(
+        onPressed: showSimilarGameRooms,
+        icon: const Icon(Icons.sports_esports_outlined),
+        label: const Text('同类主播'),
+      ),
       IconButton(
         onPressed: () {
           showMore();
@@ -778,6 +787,127 @@ class LiveRoomPage extends GetView<LiveRoomController> {
         icon: const Icon(Icons.more_horiz),
       ),
     ];
+  }
+
+  Future<void> showSimilarGameRooms() async {
+    final detail = controller.detail.value;
+    final site = controller.site;
+    final categoryId = detail?.categoryId;
+    final categoryName = detail?.categoryName;
+    if (detail == null) return;
+
+    final result = () async {
+      LiveSubCategory? selected;
+      if (site.liveSite is DouyinSite) {
+        selected = await (site.liveSite as DouyinSite)
+            .getRoomGameCategory(detail.roomId);
+      } else if ((categoryId != null && categoryId.isNotEmpty) ||
+          (categoryName != null && categoryName.isNotEmpty)) {
+        final categories = await site.liveSite.getCategores();
+        for (final parent in categories) {
+          for (final category in parent.children) {
+            if (categoryId != null &&
+                categoryId != '0' &&
+                category.id == categoryId) {
+              selected = category;
+            } else if (selected == null &&
+                categoryName != null &&
+                category.name == categoryName) {
+              selected = category;
+            }
+          }
+        }
+      }
+      if (selected == null) return null;
+      final rooms = await site.liveSite.getCategoryRooms(selected);
+      return (category: selected, rooms: rooms.items);
+    }();
+
+    final fullCategory = await showModalBottomSheet<LiveSubCategory>(
+      context: Get.context!,
+      constraints: const BoxConstraints(maxWidth: 640),
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.72,
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('同类游戏主播', style: TextStyle(fontSize: 18)),
+              ),
+              Expanded(
+                child: FutureBuilder(
+                  future: result,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return const Center(child: Text('推荐加载失败，请稍后重试'));
+                    }
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final data = snapshot.data;
+                    if (data == null) {
+                      return const Center(child: Text('未找到当前游戏的主播分类'));
+                    }
+                    final rooms = data.rooms
+                        .where((room) => room.roomId != detail.roomId)
+                        .toList();
+                    if (rooms.isEmpty) {
+                      return Center(child: Text('${data.category.name}暂无其他主播'));
+                    }
+                    return Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(data.category.name),
+                        ),
+                        Expanded(
+                          child: ListView.builder(
+                            itemCount: rooms.length,
+                            itemBuilder: (context, index) {
+                              final room = rooms[index];
+                              return ListTile(
+                                leading: NetImage(room.cover,
+                                    width: 72, height: 48, borderRadius: 6),
+                                title: Text(room.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                                subtitle: Text(room.userName),
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  controller.resetRoom(site, room.roomId);
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context, data.category);
+                          },
+                          icon: const Icon(Icons.grid_view_outlined),
+                          label: const Text('查看完整分类'),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (fullCategory != null) {
+      final wasPlaying = controller.player.state.playing;
+      if (wasPlaying) await controller.player.pause();
+      await Get.toNamed(RoutePath.kCategoryDetail,
+          arguments: [site, fullCategory]);
+      if (!controller.isClosed && wasPlaying) {
+        await controller.player.play();
+      }
+    }
   }
 
   void showMore() {

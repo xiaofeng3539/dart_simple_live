@@ -17,6 +17,8 @@ import 'package:simple_live_core/simple_live_core.dart';
 /// * 需要参数的页面都应使用此类
 /// * 如不需要参数，可以使用Get.toNamed
 class AppNavigator {
+  static int _nextRoomInstance = 0;
+
   /// 跳转至分类详情
   static void toCategoryDetail(
       {required Site site, required LiveSubCategory category}) {
@@ -24,7 +26,7 @@ class AppNavigator {
   }
 
   /// 跳转至直播间
-  static void toLiveRoomDetail(
+  static Future<void> toLiveRoomDetail(
       {required Site site, required String roomId}) async {
     if (site.id == Constant.kBiliBili &&
         !BiliBiliAccountService.instance.logined.value &&
@@ -50,8 +52,9 @@ class AppNavigator {
       }
     }
 
-    Get.toNamed(RoutePath.kLiveRoomDetail, arguments: site, parameters: {
+    await Get.toNamed(RoutePath.kLiveRoomDetail, arguments: site, parameters: {
       "roomId": roomId,
+      "instance": '${++_nextRoomInstance}',
     });
   }
 

@@ -65,6 +65,8 @@ dependencies:
   # 网络相关
   shelf: ^1.4.2
   shelf_router: ^1.1.4
+  shelf_web_socket: ^2.0.1
+  web_socket_channel: ^3.0.3
   network_info_plus: ^7.0.0
   signalr_netcore: ^1.4.4 #SignalR
 

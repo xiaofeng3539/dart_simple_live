@@ -43,6 +43,12 @@ class LiveRoomDetail {
   /// 显示时间
   final String? showTime;
 
+  /// 当前直播间所属的游戏分类 ID
+  final String? categoryId;
+
+  /// 当前直播间所属的游戏分类名称
+  final String? categoryName;
+
   LiveRoomDetail({
     required this.roomId,
     required this.title,
@@ -58,6 +64,8 @@ class LiveRoomDetail {
     required this.url,
     this.isRecord = false,
     this.showTime,
+    this.categoryId,
+    this.categoryName,
   });
 
   @override

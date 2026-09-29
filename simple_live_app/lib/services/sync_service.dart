@@ -19,7 +19,9 @@ import 'package:udp/udp.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
+import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:uuid/uuid.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 class SyncService extends GetxService {
   static SyncService get instance => Get.find<SyncService>();
@@ -190,6 +192,9 @@ class SyncService extends GetxService {
       var serverRouter = Router();
       serverRouter.get('/', _helloRequest);
       serverRouter.get('/info', _infoRequest);
+      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        serverRouter.get('/sync-relay', webSocketHandler(_relayRemoteSync));
+      }
       serverRouter.post('/sync/follow', _syncFollowUserReuqest);
       serverRouter.post('/sync/tag', _syncFollowUserTagRequest);
       serverRouter.post('/sync/history', _syncHistoryReuqest);
@@ -214,6 +219,26 @@ class SyncService extends GetxService {
     } catch (e) {
       httpErrorMsg.value = e.toString();
       Log.logPrint(e);
+    }
+  }
+
+  void _relayRemoteSync(WebSocketChannel client) async {
+    try {
+      final upstream = await WebSocket.connect(Constant.kRemoteSyncUrl)
+          .timeout(const Duration(seconds: 15));
+      client.stream.listen(
+        upstream.add,
+        onDone: upstream.close,
+        onError: (Object error) => upstream.close(),
+      );
+      upstream.listen(
+        client.sink.add,
+        onDone: client.sink.close,
+        onError: (Object error) => client.sink.close(),
+      );
+    } catch (error) {
+      Log.logPrint('远程同步转接失败：$error');
+      await client.sink.close(1011, '同步服务连接失败');
     }
   }
 

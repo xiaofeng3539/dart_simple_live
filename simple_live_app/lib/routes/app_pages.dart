@@ -97,13 +97,16 @@ class AppPages {
     //直播间
     GetPage(
       name: RoutePath.kLiveRoomDetail,
-      page: () => const LiveRoomPage(),
-      binding: BindingsBuilder.put(
-        () => LiveRoomController(
-          pSite: Get.arguments,
-          pRoomId: Get.parameters["roomId"] ?? "",
-        ),
-      ),
+      page: () => LiveRoomPage(roomTag: Get.parameters["instance"]),
+      binding: BindingsBuilder(() {
+        Get.put(
+          LiveRoomController(
+            pSite: Get.arguments,
+            pRoomId: Get.parameters["roomId"] ?? "",
+          ),
+          tag: Get.parameters["instance"],
+        );
+      }),
     ),
     //弹幕设置
     GetPage(
