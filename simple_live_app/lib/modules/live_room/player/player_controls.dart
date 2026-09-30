@@ -100,13 +100,20 @@ void adjustVolumeOnScroll(
   controller.player.setVolume(volume);
 }
 
+Widget playerWindowDragArea({
+  required Widget child,
+  required bool isSmallWindow,
+}) {
+  return isSmallWindow ? DragToMoveArea(child: child) : child;
+}
+
 Widget buildFullControls(
   VideoState videoState,
   LiveRoomController controller,
 ) {
   var padding = MediaQuery.of(videoState.context).padding;
   GlobalKey volumeButtonkey = GlobalKey();
-  return DragToMoveArea(
+  return playerWindowDragArea(
     child: Stack(
       children: [
         Container(),
@@ -361,9 +368,8 @@ Widget buildFullControls(
                   Visibility(
                     visible: !Platform.isAndroid && !Platform.isIOS,
                     child: Listener(
-                      onPointerSignal: (event) =>
-                          _onVolumePointerSignal(
-                              event, controller, volumeButtonkey.currentContext),
+                      onPointerSignal: (event) => _onVolumePointerSignal(
+                          event, controller, volumeButtonkey.currentContext),
                       child: IconButton(
                         key: volumeButtonkey,
                         onPressed: () {
@@ -463,6 +469,7 @@ Widget buildFullControls(
         ),
       ],
     ),
+    isSmallWindow: controller.smallWindowState.value,
   );
 }
 
@@ -624,9 +631,8 @@ Widget buildControls(
                 Visibility(
                   visible: !Platform.isAndroid && !Platform.isIOS,
                   child: Listener(
-                    onPointerSignal: (event) =>
-                        _onVolumePointerSignal(
-                            event, controller, volumeButtonkey.currentContext),
+                    onPointerSignal: (event) => _onVolumePointerSignal(
+                        event, controller, volumeButtonkey.currentContext),
                     child: IconButton(
                       key: volumeButtonkey,
                       onPressed: () {

@@ -154,9 +154,10 @@ class BiliBiliSite implements LiveSite {
   }
 
   @override
-  Future<LivePlayUrl> getPlayUrls(
-      {required LiveRoomDetail detail,
-      required LivePlayQuality quality}) async {
+  Future<LivePlayUrl> getPlayUrls({
+    required LiveRoomDetail detail,
+    required LivePlayQuality quality,
+  }) async {
     List<String> urls = [];
     var result = await HttpClient.instance.getJson(
       "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo",
@@ -179,27 +180,24 @@ class BiliBiliSite implements LiveSite {
           var urlList = codecItem["url_info"];
           var baseUrl = codecItem["base_url"].toString();
           for (var urlItem in urlList) {
-            urls.add(
-              "${urlItem["host"]}$baseUrl${urlItem["extra"]}",
-            );
+            urls.add("${urlItem["host"]}$baseUrl${urlItem["extra"]}");
           }
         }
       }
     }
     // 对链接进行排序，包含mcdn的在后
-    urls.sort((a, b) {
-      if (a.contains("mcdn")) {
-        return 1;
-      } else {
-        return -1;
-      }
-    });
+    // 保留接口给出的线路顺序，并将 mcdn 放在备用位置。
+    urls = urls.toSet().toList();
+    urls = [
+      ...urls.where((url) => !url.contains("mcdn")),
+      ...urls.where((url) => url.contains("mcdn")),
+    ];
     return LivePlayUrl(
       urls: urls,
       headers: {
         "referer": "https://live.bilibili.com",
         "user-agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188"
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188",
       },
     );
   }

@@ -20,6 +20,7 @@ import 'package:simple_live_app/app/utils/listen_fourth_button.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/models/db/history.dart';
+import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/other/debug_log_page.dart';
 import 'package:simple_live_app/routes/app_pages.dart';
 import 'package:simple_live_app/routes/route_path.dart';
@@ -176,6 +177,25 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   static const _windowChannel = MethodChannel('simple_live/window');
   bool _handlingClose = false;
+
+  Future<bool> _exitPlayerFullScreen() async {
+    if (Platform.isAndroid ||
+        Platform.isIOS ||
+        !await windowManager.isFullScreen()) {
+      return false;
+    }
+    final tag = Get.parameters['instance'];
+    if (Get.currentRoute == RoutePath.kLiveRoomDetail &&
+        Get.isRegistered<LiveRoomController>(tag: tag)) {
+      final controller = Get.find<LiveRoomController>(tag: tag);
+      if (controller.fullScreenState.value) {
+        await controller.exitFull();
+        return true;
+      }
+    }
+    await windowManager.setFullScreen(false);
+    return true;
+  }
 
   @override
   void initState() {
@@ -375,13 +395,7 @@ class _MyAppState extends State<MyApp> {
                         () => FourthButtonTapGestureRecognizer(),
                         (FourthButtonTapGestureRecognizer instance) {
                           instance.onTapDown = (TapDownDetails details) async {
-                            //如果处于全屏状态，退出全屏
-                            if (!Platform.isAndroid && !Platform.isIOS) {
-                              if (await windowManager.isFullScreen()) {
-                                await windowManager.setFullScreen(false);
-                                return;
-                              }
-                            }
+                            if (await _exitPlayerFullScreen()) return;
                             Get.back();
                           };
                         },
@@ -392,14 +406,7 @@ class _MyAppState extends State<MyApp> {
                       onKeyEvent: (KeyEvent event) async {
                         if (event is KeyDownEvent &&
                             event.logicalKey == LogicalKeyboardKey.escape) {
-                          // ESC退出全屏
-                          // 如果处于全屏状态，退出全屏
-                          if (!Platform.isAndroid && !Platform.isIOS) {
-                            if (await windowManager.isFullScreen()) {
-                              await windowManager.setFullScreen(false);
-                              return;
-                            }
-                          }
+                          await _exitPlayerFullScreen();
                         }
                       },
                       child: child!,

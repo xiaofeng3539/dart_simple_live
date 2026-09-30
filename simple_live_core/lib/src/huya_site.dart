@@ -208,27 +208,38 @@ class HuyaSite implements LiveSite {
   }
 
   @override
-  Future<LivePlayUrl> getPlayUrls(
-      {required LiveRoomDetail detail,
-      required LivePlayQuality quality}) async {
+  Future<LivePlayUrl> getPlayUrls({
+    required LiveRoomDetail detail,
+    required LivePlayQuality quality,
+  }) async {
     var ls = <String>[];
     for (var element in quality.data["urls"]) {
       var line = element as HuyaLineModel;
-      var url = await getPlayUrl(line, quality.data["bitRate"]);
-      ls.add(url);
+      try {
+        var url = await getPlayUrl(line, quality.data["bitRate"]);
+        if (!ls.contains(url)) ls.add(url);
+      } catch (e) {
+        CoreLog.error(e);
+      }
     }
     // 最新UA需要额外验证，此方法暂时弃用
     // var ua = await getHuYaUA();
-    return LivePlayUrl(
-      urls: ls,
-      headers: {"user-agent": HYSDK_UA},
-    );
+    return LivePlayUrl(urls: ls, headers: {"user-agent": HYSDK_UA});
   }
 
   Future<String> getPlayUrl(HuyaLineModel line, int bitRate) async {
-    var antiCode = await getCndTokenInfoEx(line.streamName);
+    // 页面已包含各线路的鉴权，避免额外接口被拒绝时无法播放。
+    var antiCode = line.lineType == HuyaLineType.hls
+        ? line.hlsAntiCode
+        : line.flvAntiCode;
+    if (antiCode.isEmpty) {
+      antiCode = await getCndTokenInfoEx(
+        line.streamName,
+      ).timeout(const Duration(seconds: 8));
+    }
     antiCode = buildAntiCode(line.streamName, line.presenterUid, antiCode);
-    var url = '${line.line}/${line.streamName}.flv?${antiCode}&codec=264';
+    var extension = line.lineType == HuyaLineType.hls ? 'm3u8' : 'flv';
+    var url = '${line.line}/${line.streamName}.$extension?$antiCode&codec=264';
     if (bitRate > 0) {
       url += "&ratio=$bitRate";
     }

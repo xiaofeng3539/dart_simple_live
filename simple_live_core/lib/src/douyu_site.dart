@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'common/core_log.dart';
 import 'dart:math';
 
 import 'package:simple_live_core/src/common/http_client.dart';
@@ -140,9 +141,14 @@ class DouyuSite implements LiveSite {
 
     List<String> urls = [];
     for (var item in data.cdns) {
-      var url = await getPlayUrl(detail.roomId, args, data.rate, item);
-      if (url.isNotEmpty) {
-        urls.add(url);
+      try {
+        var url = await getPlayUrl(detail.roomId, args, data.rate, item);
+        if (url.isNotEmpty && !urls.contains(url)) {
+          urls.add(url);
+        }
+      } catch (e) {
+        // 单条线路失败时继续读取其他线路。
+        CoreLog.error(e);
       }
     }
     return LivePlayUrl(urls: urls);
@@ -166,7 +172,19 @@ class DouyuSite implements LiveSite {
       formUrlEncoded: true,
     );
 
-    return "${result["data"]["rtmp_url"]}/${HtmlUnescape().convert(result["data"]["rtmp_live"].toString())}";
+    var data = result["data"];
+    if (data is! Map) return "";
+    var host = data["rtmp_url"]?.toString() ?? "";
+    var stream = data["rtmp_live"]?.toString() ?? "";
+    if (host.isEmpty || stream.isEmpty) return "";
+    var url = "$host/${HtmlUnescape().convert(stream)}";
+    var uri = Uri.tryParse(url);
+    if (uri == null ||
+        !uri.hasAuthority ||
+        (uri.scheme != "https" && uri.scheme != "http")) {
+      return "";
+    }
+    return url;
   }
 
   @override

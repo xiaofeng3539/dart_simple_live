@@ -110,6 +110,14 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   Timer? _volumeSliderTimer;
   bool _volumeSliderOpen = false;
   static const _volumeSliderTag = 'simple-live-volume-slider';
+  int _roomRequest = 0;
+  int _playRequest = 0;
+  Future<void> _playerOperation = Future<void>.value();
+  bool _roomClosed = false;
+  bool _isCurrentRoomRequest(int request) =>
+      !_roomClosed && request == _roomRequest;
+  bool _isCurrentRequest(int request) =>
+      !_roomClosed && request == _playRequest;
 
   @override
   void onInit() {
@@ -283,6 +291,12 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   /// 加载直播间信息
   void loadData() async {
+    if (_roomClosed) return;
+    final request = ++_roomRequest;
+    final playRequest = ++_playRequest;
+    playUrls.clear();
+    currentLineIndex = -1;
+    currentLineInfo.value = "";
     try {
       SmartDialog.showLoading(msg: "");
       loadError.value = false;
@@ -290,7 +304,12 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       errorStackTrace = null;
       update();
       addSysMsg("正在读取直播间信息");
-      detail.value = await site.liveSite.getRoomDetail(roomId: roomId);
+      final roomSite = site;
+      final roomIdToLoad = roomId;
+      final roomDetail =
+          await roomSite.liveSite.getRoomDetail(roomId: roomIdToLoad);
+      if (!_isCurrentRoomRequest(request)) return;
+      detail.value = roomDetail;
 
       if (site.id == Constant.kDouyin) {
         // 1.6.0之前收藏的WebRid
@@ -319,7 +338,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         }
       }
 
-      getSuperChatMessage();
+      getSuperChatMessage(request);
 
       addHistory();
       // 确认房间关注状态
@@ -327,7 +346,11 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       online.value = detail.value!.online;
       liveStatus.value = detail.value!.status || detail.value!.isRecord;
       if (liveStatus.value) {
-        getPlayQualites();
+        getPlayQualites(playRequest);
+      } else {
+        await _playerOperation;
+        if (!_isCurrentRoomRequest(request)) return;
+        await player.stop();
       }
       if (detail.value!.isRecord) {
         addSysMsg("当前主播未开播，正在轮播录像");
@@ -337,24 +360,28 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       liveDanmaku.start(detail.value?.danmakuData);
       startLiveDurationTimer(); // 启动开播时长定时器
     } catch (e, stackTrace) {
+      if (!_isCurrentRoomRequest(request)) return;
       Log.logPrint(e);
       //SmartDialog.showToast(e.toString());
       loadError.value = true;
       error = e;
       errorStackTrace = stackTrace;
     } finally {
-      SmartDialog.dismiss(status: SmartStatus.loading);
+      if (_isCurrentRoomRequest(request)) {
+        SmartDialog.dismiss(status: SmartStatus.loading);
+      }
     }
   }
 
   /// 初始化播放器
-  void getPlayQualites() async {
+  void getPlayQualites(int request) async {
     qualites.clear();
     currentQuality = -1;
 
     try {
       var playQualites =
           await site.liveSite.getPlayQualites(detail: detail.value!);
+      if (!_isCurrentRequest(request)) return;
 
       if (playQualites.isEmpty) {
         SmartDialog.showToast("无法读取播放清晰度");
@@ -362,6 +389,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       }
       qualites.value = playQualites;
       var qualityLevel = await getQualityLevel();
+      if (!_isCurrentRequest(request)) return;
       if (qualityLevel == 2) {
         //最高
         currentQuality = 0;
@@ -374,8 +402,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         currentQuality = middle;
       }
 
-      getPlayUrl();
+      getPlayUrl(request: request);
     } catch (e) {
+      if (!_isCurrentRequest(request)) return;
       Log.logPrint(e);
       SmartDialog.showToast("无法读取播放清晰度");
     }
@@ -395,34 +424,47 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     return qualityLevel;
   }
 
-  void getPlayUrl() async {
-    playUrls.clear();
-    currentQualityInfo.value = qualites[currentQuality].quality;
-    currentLineInfo.value = "";
-    currentLineIndex = -1;
-    var playUrl = await site.liveSite
-        .getPlayUrls(detail: detail.value!, quality: qualites[currentQuality]);
-    if (playUrl.urls.isEmpty) {
-      SmartDialog.showToast("无法读取播放地址");
+  void getPlayUrl({int? request}) async {
+    final currentRequest = request ?? ++_playRequest;
+    if (!_isCurrentRequest(currentRequest) ||
+        currentQuality < 0 ||
+        currentQuality >= qualites.length ||
+        detail.value == null) {
       return;
     }
-    playUrls.value = playUrl.urls;
-    playHeaders = playUrl.headers;
-    currentLineIndex = 0;
-    currentLineInfo.value = "线路${currentLineIndex + 1}";
-    //重置错误次数
-    mediaErrorRetryCount = 0;
-    initPlaylist();
+    final quality = qualites[currentQuality];
+    final roomDetail = detail.value!;
+    try {
+      final playUrl =
+          await site.liveSite.getPlayUrls(detail: roomDetail, quality: quality);
+      if (!_isCurrentRequest(currentRequest)) return;
+      if (playUrl.urls.isEmpty) {
+        SmartDialog.showToast("无法读取播放地址");
+        return;
+      }
+      playUrls.value = playUrl.urls;
+      playHeaders = playUrl.headers;
+      currentQualityInfo.value = quality.quality;
+      currentLineIndex = 0;
+      currentLineInfo.value = "线路1";
+      mediaErrorRetryCount = 0;
+      initPlaylist(currentRequest);
+    } catch (e) {
+      if (!_isCurrentRequest(currentRequest)) return;
+      Log.logPrint(e);
+      SmartDialog.showToast("无法读取播放地址");
+    }
   }
 
   void changePlayLine(int index) {
+    if (index < 0 || index >= playUrls.length) return;
     currentLineIndex = index;
     //重置错误次数
     mediaErrorRetryCount = 0;
     setPlayer();
   }
 
-  void initPlaylist() async {
+  void initPlaylist(int request) async {
     currentLineInfo.value = "线路${currentLineIndex + 1}";
     errorMsg.value = "";
 
@@ -434,28 +476,50 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       return Media(finalUrl, httpHeaders: playHeaders);
     }).toList();
 
-    // 初始化播放器并设置 ao 参数
-    await initializePlayer();
-
-    await player.open(Playlist(mediaList));
+    _playerOperation = _playerOperation.then((_) async {
+      if (!_isCurrentRequest(request)) return;
+      try {
+        await initializePlayer();
+        if (!_isCurrentRequest(request)) return;
+        await player.open(Playlist(mediaList));
+      } catch (e) {
+        if (!_isCurrentRequest(request)) return;
+        Log.logPrint(e);
+        errorMsg.value = "播放失败";
+      }
+    });
   }
 
-  void setPlayer() async {
+  void setPlayer() {
+    if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) return;
     currentLineInfo.value = "线路${currentLineIndex + 1}";
     errorMsg.value = "";
-
-    await player.jump(currentLineIndex);
+    final request = _playRequest;
+    final lineIndex = currentLineIndex;
+    _playerOperation = _playerOperation.then((_) async {
+      if (!_isCurrentRequest(request)) return;
+      try {
+        await player.jump(lineIndex);
+      } catch (e) {
+        if (!_isCurrentRequest(request)) return;
+        Log.logPrint(e);
+        errorMsg.value = "播放失败";
+      }
+    });
   }
 
   @override
   void mediaEnd() async {
     super.mediaEnd();
+    final request = _playRequest;
+    if (!_isCurrentRequest(request) || playUrls.isEmpty) return;
     if (mediaErrorRetryCount < 2) {
       Log.d("播放结束，尝试第${mediaErrorRetryCount + 1}次刷新");
       if (mediaErrorRetryCount == 1) {
         //延迟一秒再刷新
         await Future.delayed(const Duration(seconds: 1));
       }
+      if (!_isCurrentRequest(request)) return;
       mediaErrorRetryCount += 1;
       //刷新一次
       setPlayer();
@@ -477,12 +541,15 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   @override
   void mediaError(String error) async {
     super.mediaEnd();
+    final request = _playRequest;
+    if (!_isCurrentRequest(request) || playUrls.isEmpty) return;
     if (mediaErrorRetryCount < 2) {
       Log.d("播放失败，尝试第${mediaErrorRetryCount + 1}次刷新");
       if (mediaErrorRetryCount == 1) {
         //延迟一秒再刷新
         await Future.delayed(const Duration(seconds: 1));
       }
+      if (!_isCurrentRequest(request)) return;
       mediaErrorRetryCount += 1;
       //刷新一次
       setPlayer();
@@ -500,12 +567,14 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   /// 读取SC
-  void getSuperChatMessage() async {
+  void getSuperChatMessage(int request) async {
     try {
       var sc =
           await site.liveSite.getSuperChatMessage(roomId: detail.value!.roomId);
+      if (!_isCurrentRoomRequest(request)) return;
       superChats.addAll(sc);
     } catch (e) {
+      if (!_isCurrentRoomRequest(request)) return;
       Log.logPrint(e);
       addSysMsg("SC读取失败");
     }
@@ -678,8 +747,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
                   SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 3,
-                      thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 7),
+                      thumbShape:
+                          const RoundSliderThumbShape(enabledThumbRadius: 7),
                     ),
                     child: Slider(
                       min: 0,
@@ -687,7 +756,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
                       value: AppSettingsController.instance.playerVolume.value,
                       onChanged: (newValue) {
                         player.setVolume(newValue);
-                        AppSettingsController.instance.setPlayerVolume(newValue);
+                        AppSettingsController.instance
+                            .setPlayerVolume(newValue);
                       },
                     ),
                   ),
@@ -1022,6 +1092,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       return;
     }
 
+    final request = ++_roomRequest;
+    ++_playRequest;
     rxSite.value = site;
     rxRoomId.value = roomId;
 
@@ -1035,7 +1107,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     liveDanmaku = site.liveSite.getDanmaku();
 
     // 停止播放
+    await _playerOperation;
+    if (!_isCurrentRoomRequest(request)) return;
     await player.stop();
+    if (!_isCurrentRoomRequest(request)) return;
 
     // 刷新信息
     loadData();
@@ -1100,7 +1175,11 @@ ${errorStackTrace ?? ''}''');
   }
 
   @override
-  void onClose() {
+  void onClose() async {
+    _roomClosed = true;
+    ++_roomRequest;
+    ++_playRequest;
+    SmartDialog.dismiss(status: SmartStatus.loading);
     _volumeSliderTimer?.cancel();
     if (_volumeSliderOpen) {
       SmartDialog.dismiss(status: SmartStatus.attach, tag: _volumeSliderTag);
@@ -1112,6 +1191,7 @@ ${errorStackTrace ?? ''}''');
     liveDanmaku.stop();
     danmakuController = null;
     _liveDurationTimer?.cancel(); // 页面关闭时取消定时器
+    await _playerOperation;
     super.onClose();
   }
 }
