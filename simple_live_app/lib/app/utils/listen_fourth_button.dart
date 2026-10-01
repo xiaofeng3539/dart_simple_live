@@ -7,6 +7,14 @@ class FourthButtonTapGestureRecognizer extends BaseTapGestureRecognizer {
   GestureTapDownCallback? onTapDown;
 
   @override
+  bool isPointerAllowed(PointerDownEvent event) {
+    // 只识别鼠标返回侧键，不能抢占视频双击、按钮或手机触摸。
+    return event.kind == PointerDeviceKind.mouse &&
+        event.buttons == kBackMouseButton &&
+        super.isPointerAllowed(event);
+  }
+
+  @override
   void handleTapDown({required PointerDownEvent down}) {
     final TapDownDetails details = TapDownDetails(
       globalPosition: down.position,

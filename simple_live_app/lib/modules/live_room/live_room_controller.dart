@@ -58,6 +58,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   /// 滚动控制
   final ScrollController scrollController = ScrollController();
+  bool _chatScrollScheduled = false;
 
   /// 聊天信息
   RxList<LiveMessage> messages = RxList<LiveMessage>();
@@ -113,6 +114,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   int _roomRequest = 0;
   int _playRequest = 0;
   Future<void> _playerOperation = Future<void>.value();
+  Timer? _bufferingTimer;
+  Timer? _playbackFailureTimer;
+  bool _recoveringPlayback = false;
   bool _roomClosed = false;
   bool _isCurrentRoomRequest(int request) =>
       !_roomClosed && request == _roomRequest;
@@ -202,7 +206,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       if (disableAutoScroll.value) {
         return;
       }
-      scrollController.jumpTo(scrollController.position.maxScrollExtent);
+      final position = scrollController.position;
+      if (position.pixels != position.maxScrollExtent) {
+        scrollController.jumpTo(position.maxScrollExtent);
+      }
     }
   }
 
@@ -242,9 +249,14 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
       messages.add(msg);
 
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => chatScrollToBottom(),
-      );
+      // 同一帧消息合并滚动，避免每条消息重复提交布局后的滚动操作。
+      if (!_chatScrollScheduled && !disableAutoScroll.value) {
+        _chatScrollScheduled = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _chatScrollScheduled = false;
+          if (!_roomClosed) chatScrollToBottom();
+        });
+      }
       if (!liveStatus.value || isBackground) {
         return;
       }
@@ -292,6 +304,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   /// 加载直播间信息
   void loadData() async {
     if (_roomClosed) return;
+    _bufferingTimer?.cancel();
+    _bufferingTimer = null;
+    _playbackFailureTimer?.cancel();
     final request = ++_roomRequest;
     final playRequest = ++_playRequest;
     playUrls.clear();
@@ -458,6 +473,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   void changePlayLine(int index) {
     if (index < 0 || index >= playUrls.length) return;
+    _bufferingTimer?.cancel();
     currentLineIndex = index;
     //重置错误次数
     mediaErrorRetryCount = 0;
@@ -475,13 +491,15 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       }
       return Media(finalUrl, httpHeaders: playHeaders);
     }).toList();
+    final lineIndex = currentLineIndex;
 
     _playerOperation = _playerOperation.then((_) async {
       if (!_isCurrentRequest(request)) return;
       try {
         await initializePlayer();
-        if (!_isCurrentRequest(request)) return;
-        await player.open(Playlist(mediaList));
+        if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
+        // 线路由房间控制器管理，避免播放器自动推进与错误恢复同时切换。
+        await player.open(mediaList[lineIndex]);
       } catch (e) {
         if (!_isCurrentRequest(request)) return;
         Log.logPrint(e);
@@ -490,80 +508,143 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     });
   }
 
-  void setPlayer() {
+  Future<void> setPlayer() async {
     if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) return;
+    _bufferingTimer?.cancel();
+    _bufferingTimer = null;
+    _playbackFailureTimer?.cancel();
     currentLineInfo.value = "线路${currentLineIndex + 1}";
     errorMsg.value = "";
     final request = _playRequest;
     final lineIndex = currentLineIndex;
+    final mediaUrl = playUrls[lineIndex];
+    final headers = playHeaders;
     _playerOperation = _playerOperation.then((_) async {
-      if (!_isCurrentRequest(request)) return;
+      if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
       try {
-        await player.jump(lineIndex);
+        var url = mediaUrl;
+        if (AppSettingsController.instance.playerForceHttps.value) {
+          url = url.replaceAll('http://', 'https://');
+        }
+        await player.open(Media(url, httpHeaders: headers));
       } catch (e) {
         if (!_isCurrentRequest(request)) return;
         Log.logPrint(e);
         errorMsg.value = "播放失败";
       }
     });
+    await _playerOperation;
   }
 
   @override
-  void mediaEnd() async {
-    super.mediaEnd();
-    final request = _playRequest;
-    if (!_isCurrentRequest(request) || playUrls.isEmpty) return;
-    if (mediaErrorRetryCount < 2) {
-      Log.d("播放结束，尝试第${mediaErrorRetryCount + 1}次刷新");
-      if (mediaErrorRetryCount == 1) {
-        //延迟一秒再刷新
-        await Future.delayed(const Duration(seconds: 1));
-      }
-      if (!_isCurrentRequest(request)) return;
-      mediaErrorRetryCount += 1;
-      //刷新一次
-      setPlayer();
-      return;
-    }
-
-    Log.d("播放结束");
-    // 遍历线路，如果全部链接都断开就是直播结束了
-    if (playUrls.length - 1 == currentLineIndex) {
-      liveStatus.value = false;
-    } else {
-      changePlayLine(currentLineIndex + 1);
-
-      //setPlayer();
-    }
+  void mediaEnd() {
+    _checkPlaybackFailure();
   }
 
   int mediaErrorRetryCount = 0;
   @override
-  void mediaError(String error) async {
-    super.mediaEnd();
-    final request = _playRequest;
-    if (!_isCurrentRequest(request) || playUrls.isEmpty) return;
-    if (mediaErrorRetryCount < 2) {
-      Log.d("播放失败，尝试第${mediaErrorRetryCount + 1}次刷新");
-      if (mediaErrorRetryCount == 1) {
-        //延迟一秒再刷新
-        await Future.delayed(const Duration(seconds: 1));
-      }
-      if (!_isCurrentRequest(request)) return;
-      mediaErrorRetryCount += 1;
-      //刷新一次
-      setPlayer();
+  void mediaError(String error) {
+    _checkPlaybackFailure(error: error);
+  }
+
+  void _checkPlaybackFailure({String? error}) {
+    if (_roomClosed || isBackground || _recoveringPlayback ||
+        playUrls.isEmpty || (_playbackFailureTimer?.isActive ?? false)) {
       return;
     }
+    final request = _playRequest;
+    final line = currentLineIndex;
+    final position = player.state.position;
+    // SDK 的错误流包含可恢复的解码和网络日志，不能每条日志都清空视频重连。
+    _playbackFailureTimer = Timer(const Duration(seconds: 3), () {
+      _playbackFailureTimer = null;
+      if (!_isCurrentRequest(request) || currentLineIndex != line || isBackground) {
+        return;
+      }
+      final state = player.state;
+      if (state.position > position ||
+          (state.playing && !state.buffering && !state.completed)) {
+        return;
+      }
+      // 结束通知可能属于上一条流，只有当前流也结束时才恢复。
+      if (error == null && !state.completed) return;
+      _recoverPlayback(error: error);
+    });
+  }
 
-    if (playUrls.length - 1 == currentLineIndex) {
-      errorMsg.value = "播放失败";
-      SmartDialog.showToast("播放失败:$error");
-    } else {
-      //currentLineIndex += 1;
-      //setPlayer();
-      changePlayLine(currentLineIndex + 1);
+  Future<void> _recoverPlayback({String? error}) async {
+    final request = _playRequest;
+    if (_recoveringPlayback || !_isCurrentRequest(request) || playUrls.isEmpty) return;
+    _recoveringPlayback = true;
+    _bufferingTimer?.cancel();
+    try {
+      if (site.id == Constant.kHuya && detail.value != null &&
+          currentQuality >= 0 && currentQuality < qualites.length) {
+        final line = currentLineIndex;
+        final oldUri = Uri.tryParse(playUrls[line]);
+        try {
+          final fresh = await site.liveSite.getPlayUrls(
+              detail: detail.value!, quality: qualites[currentQuality]);
+          if (!_isCurrentRequest(request) || currentLineIndex != line) return;
+          if (fresh.urls.isNotEmpty) {
+            final sameLine = fresh.urls.indexWhere((url) {
+              final uri = Uri.tryParse(url);
+              return uri?.host == oldUri?.host && uri?.path == oldUri?.path;
+            });
+            playUrls.value = fresh.urls;
+            playHeaders = fresh.headers;
+            currentLineIndex = sameLine >= 0 ? sameLine : -1;
+          }
+        } catch (e) {
+          Log.d('虎牙恢复鉴权失败：${e.runtimeType}');
+        }
+        if (!_isCurrentRequest(request) || isBackground) return;
+      }
+      // 优先切换备用线路，不在已失效的 CDN 上连续等待。
+      if (currentLineIndex + 1 < playUrls.length) {
+        currentLineIndex++;
+        mediaErrorRetryCount = 0;
+        await setPlayer();
+      } else if (mediaErrorRetryCount < 2) {
+        mediaErrorRetryCount++;
+        await setPlayer();
+      } else if (error == null) {
+        liveStatus.value = false;
+      } else {
+        errorMsg.value = "播放失败";
+        SmartDialog.showToast("播放失败:$error");
+      }
+    } finally {
+      _recoveringPlayback = false;
     }
+  }
+
+  @override
+  void mediaBuffering(bool buffering) {
+    if (!buffering) {
+      _bufferingTimer?.cancel();
+      _bufferingTimer = null;
+      return;
+    }
+    if (_bufferingTimer?.isActive ?? false) return;
+    if (!buffering || _roomClosed || playUrls.isEmpty) return;
+    final request = _playRequest;
+    final line = currentLineIndex;
+    final position = player.state.position;
+    _bufferingTimer = Timer(const Duration(seconds: 15), () {
+      _bufferingTimer = null;
+      if (!_isCurrentRequest(request) || currentLineIndex != line ||
+          isBackground || !liveStatus.value ||
+          !player.state.buffering) {
+        return;
+      }
+      if (player.state.position > position) {
+        // 仍有播放进展时继续观察，不打断健康连接。
+        mediaBuffering(true);
+        return;
+      }
+      _recoverPlayback(error: "缓冲超时");
+    });
   }
 
   /// 读取SC
@@ -1177,6 +1258,8 @@ ${errorStackTrace ?? ''}''');
   @override
   void onClose() async {
     _roomClosed = true;
+    _bufferingTimer?.cancel();
+    _playbackFailureTimer?.cancel();
     ++_roomRequest;
     ++_playRequest;
     SmartDialog.dismiss(status: SmartStatus.loading);

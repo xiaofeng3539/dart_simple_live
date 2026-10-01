@@ -20,13 +20,16 @@ class HuyaSite implements LiveSite {
       "HYSDK(Windows, 30000002)_APP(pc_exe&7060000&official)_SDK(trans&2.32.3.5646)";
 
   static Map<String, String> requestHeaders =  {
-      'Origin': baseUrl,
-      'Referer': baseUrl,
+      'Origin': 'https://www.huya.com',
+      'Referer': 'https://www.huya.com/',
       'User-Agent': HYSDK_UA,
   };
 
   final BaseTarsHttp tupClient =
-  BaseTarsHttp("http://wup.huya.com", "liveui", headers: requestHeaders);
+  BaseTarsHttp("https://wup.huya.com", "liveui", timeOut: 6, headers: requestHeaders)
+    ..dio.options.sendTimeout = const Duration(seconds: 6)
+    ..dio.options.receiveTimeout = const Duration(seconds: 6);
+  final Map<String, Future<String>> _tokenRequests = {};
 
   String? playUserAgent;
   @override
@@ -213,14 +216,19 @@ class HuyaSite implements LiveSite {
     required LivePlayQuality quality,
   }) async {
     var ls = <String>[];
-    for (var element in quality.data["urls"]) {
+    final resolved = await Future.wait<String>(
+        quality.data["urls"].map<Future<String>>((element) async {
       var line = element as HuyaLineModel;
       try {
         var url = await getPlayUrl(line, quality.data["bitRate"]);
-        if (!ls.contains(url)) ls.add(url);
+        return url;
       } catch (e) {
         CoreLog.error(e);
+        return "";
       }
+    }));
+    for (var url in resolved) {
+      if (url.isNotEmpty && !ls.contains(url)) ls.add(url);
     }
     // 最新UA需要额外验证，此方法暂时弃用
     // var ua = await getHuYaUA();
@@ -228,14 +236,20 @@ class HuyaSite implements LiveSite {
   }
 
   Future<String> getPlayUrl(HuyaLineModel line, int bitRate) async {
-    // 页面已包含各线路的鉴权，避免额外接口被拒绝时无法播放。
+    // 原生 FLV 鉴权用于持续连接，页面鉴权仅作为接口不可用时的后备。
     var antiCode = line.lineType == HuyaLineType.hls
         ? line.hlsAntiCode
         : line.flvAntiCode;
+    if (line.lineType == HuyaLineType.flv) {
+      try {
+        final token = await _getPlaybackToken(line.streamName);
+        if (token.isNotEmpty) antiCode = token;
+      } catch (e) {
+        CoreLog.error('虎牙原生鉴权失败，使用页面后备：${e.runtimeType}');
+      }
+    }
     if (antiCode.isEmpty) {
-      antiCode = await getCndTokenInfoEx(
-        line.streamName,
-      ).timeout(const Duration(seconds: 8));
+      throw StateError('虎牙当前线路缺少播放鉴权');
     }
     antiCode = buildAntiCode(line.streamName, line.presenterUid, antiCode);
     var extension = line.lineType == HuyaLineType.hls ? 'm3u8' : 'flv';
@@ -244,6 +258,21 @@ class HuyaSite implements LiveSite {
       url += "&ratio=$bitRate";
     }
     return url;
+  }
+
+  // 只共享正在进行的请求，后续恢复重新取得凭据，不永久缓存过期令牌。
+  Future<String> _getPlaybackToken(String stream) async {
+    final pending = _tokenRequests[stream];
+    if (pending != null) return pending;
+    final request = getCndTokenInfoEx(stream).timeout(const Duration(seconds: 8));
+    _tokenRequests[stream] = request;
+    try {
+      return await request;
+    } finally {
+      if (identical(_tokenRequests[stream], request)) {
+        _tokenRequests.remove(stream);
+      }
+    }
   }
 
   // 构造 anticode, python转写
@@ -257,7 +286,7 @@ class HuyaSite implements LiveSite {
     }
 
     var ctype = mapAnti["ctype"]?.first ?? "huya_pc_exe";
-    var platformId = int.tryParse(mapAnti["t"]?.first ?? "0");
+    var platformId = int.tryParse(mapAnti["t"]?.first ?? "100") ?? 100;
 
     bool isWap = platformId == 103;
     var clacStartTime = DateTime.now().millisecondsSinceEpoch;
@@ -374,13 +403,29 @@ class HuyaSite implements LiveSite {
         huyaLines.add(HuyaLineModel(
           line: item["sFlvUrl"].toString(),
           lineType: HuyaLineType.flv,
-          flvAntiCode: item["sFlvAntiCode"].toString(),
-          hlsAntiCode: item["sHlsAntiCode"].toString(),
+          flvAntiCode: item["sFlvAntiCode"]?.toString() ?? "",
+          hlsAntiCode: item["sHlsAntiCode"]?.toString() ?? "",
           streamName: item["sStreamName"].toString(),
           cdnType: item["sCdnType"].toString(),
-          presenterUid: roomInfo["topSid"]??0,
+          presenterUid: item["lPresenterUid"] ?? roomInfo["topSid"] ?? 0,
         ));
       }
+    }
+    // 保留 FLV 优先顺序，追加页面提供的 HLS 作为断流后的备用运输方式。
+    for (var item in lines) {
+      if ((item["sHlsUrl"]?.toString() ?? "").isEmpty ||
+          (item["sHlsAntiCode"]?.toString() ?? "").isEmpty) {
+        continue;
+      }
+      huyaLines.add(HuyaLineModel(
+        line: item["sHlsUrl"].toString(),
+        lineType: HuyaLineType.hls,
+        flvAntiCode: item["sFlvAntiCode"]?.toString() ?? "",
+        hlsAntiCode: item["sHlsAntiCode"].toString(),
+        streamName: item["sStreamName"].toString(),
+        cdnType: item["sCdnType"].toString(),
+        presenterUid: item["lPresenterUid"] ?? roomInfo["topSid"] ?? 0,
+      ));
     }
 
     //清晰度

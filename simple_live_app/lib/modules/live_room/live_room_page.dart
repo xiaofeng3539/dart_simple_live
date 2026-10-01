@@ -97,7 +97,7 @@ class LiveRoomPage extends StatelessWidget {
               controller.exitFull();
             },
             child: Scaffold(
-              body: buildMediaPlayer(),
+              body: RepaintBoundary(child: buildMediaPlayer()),
             ),
           );
         } else {
@@ -116,8 +116,10 @@ class LiveRoomPage extends StatelessWidget {
   }
 
   Widget buildPageUI() {
-    return OrientationBuilder(
-      builder: (context, orientation) {
+    return Builder(
+      builder: (context) {
+        // 同方向缩放只重新布局，不重新构造整个播放页。
+        final orientation = MediaQuery.orientationOf(context);
         return Scaffold(
           appBar: AppBar(
             title: Obx(
@@ -138,7 +140,7 @@ class LiveRoomPage extends StatelessWidget {
       children: [
         AspectRatio(
           aspectRatio: 16 / 9,
-          child: buildMediaPlayer(),
+          child: RepaintBoundary(child: buildMediaPlayer()),
         ),
         buildUserProfile(context),
         buildMessageArea(),
@@ -154,15 +156,17 @@ class LiveRoomPage extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: buildMediaPlayer(),
+                child: RepaintBoundary(child: buildMediaPlayer()),
               ),
               SizedBox(
                 width: 300,
-                child: Column(
-                  children: [
-                    buildUserProfile(context),
-                    buildMessageArea(),
-                  ],
+                child: RepaintBoundary(
+                  child: Column(
+                    children: [
+                      buildUserProfile(context),
+                      buildMessageArea(),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -178,7 +182,7 @@ class LiveRoomPage extends StatelessWidget {
             ),
           ),
           padding: AppStyle.edgeInsetsV4.copyWith(
-            bottom: AppStyle.bottomBarHeight + 4,
+            bottom: MediaQuery.paddingOf(context).bottom + 4,
           ),
           child: Row(
             children: [
@@ -387,7 +391,7 @@ class LiveRoomPage extends StatelessWidget {
           ),
         ),
       ),
-      padding: EdgeInsets.only(bottom: AppStyle.bottomBarHeight),
+      padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
       child: Row(
         children: [
           Expanded(

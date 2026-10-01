@@ -39,6 +39,13 @@ mixin PlayerMixin {
   /// 初始化播放器并设置 ao 参数
   Future<void> initializePlayer() async {
     var pp = player.platform as NativePlayer;
+    // 直播使用内存缓冲，短暂抖动后补足缓存再恢复，避免反复转圈。
+    await pp.setProperty('cache-on-disk', 'no');
+    await pp.setProperty('cache-secs', '8');
+    await pp.setProperty('cache-pause', 'yes');
+    await pp.setProperty('cache-pause-wait', '2');
+    await pp.setProperty('demuxer-max-back-bytes', '4194304');
+    await pp.setProperty('network-timeout', '10');
     // 设置音频输出驱动
     if (AppSettingsController.instance.customPlayerOutput.value) {
       if (player.platform is NativePlayer) {
@@ -583,7 +590,7 @@ mixin PlayerGestureControlMixin
   }
 
   /// 双击全屏/退出全屏
-  void onDoubleTap(TapDownDetails details) {
+  void onDoubleTap() {
     if (lockControlsState.value) {
       return;
     }
@@ -751,8 +758,10 @@ class PlayerController extends BaseController
   StreamSubscription? _heightSubscription;
   StreamSubscription? _logSubscription;
   StreamSubscription? _playingSubscription;
+  StreamSubscription<bool>? _bufferingSubscription;
 
   void initStream() {
+    _bufferingSubscription = player.stream.buffering.listen(mediaBuffering);
     _errorSubscription = player.stream.error.listen((event) {
       Log.d("播放器错误：$event");
       // 跳过无音频输出的错误
@@ -794,6 +803,7 @@ class PlayerController extends BaseController
   }
 
   void disposeStream() {
+    _bufferingSubscription?.cancel();
     _errorSubscription?.cancel();
     _completedSubscription?.cancel();
     _widthSubscription?.cancel();
@@ -810,6 +820,8 @@ class PlayerController extends BaseController
   void mediaError(String error) {
     WakelockPlus.disable();
   }
+
+  void mediaBuffering(bool buffering) {}
 
   void showDebugInfo() {
     Utils.showBottomSheet(

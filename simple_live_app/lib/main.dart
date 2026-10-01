@@ -176,6 +176,7 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   static const _windowChannel = MethodChannel('simple_live/window');
+  final _keyboardFocusNode = FocusNode();
   bool _handlingClose = false;
 
   Future<bool> _exitPlayerFullScreen() async {
@@ -210,6 +211,7 @@ class _MyAppState extends State<MyApp> {
   @override
   void dispose() {
     if (Platform.isWindows) _windowChannel.setMethodCallHandler(null);
+    _keyboardFocusNode.dispose();
     super.dispose();
   }
 
@@ -402,7 +404,7 @@ class _MyAppState extends State<MyApp> {
                       ),
                     },
                     child: KeyboardListener(
-                      focusNode: FocusNode(),
+                      focusNode: _keyboardFocusNode,
                       onKeyEvent: (KeyEvent event) async {
                         if (event is KeyDownEvent &&
                             event.logicalKey == LogicalKeyboardKey.escape) {

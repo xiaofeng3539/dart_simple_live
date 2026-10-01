@@ -29,7 +29,7 @@ Widget playerControls(
     final controls = controller.fullScreenState.value
         ? buildFullControls(videoState, controller)
         : buildControls(
-            videoState.context.orientation == Orientation.portrait,
+            MediaQuery.orientationOf(videoState.context) == Orientation.portrait,
             videoState,
             controller,
           );
@@ -111,7 +111,7 @@ Widget buildFullControls(
   VideoState videoState,
   LiveRoomController controller,
 ) {
-  var padding = MediaQuery.of(videoState.context).padding;
+  var padding = MediaQuery.paddingOf(videoState.context);
   GlobalKey volumeButtonkey = GlobalKey();
   return playerWindowDragArea(
     child: Stack(
@@ -149,7 +149,7 @@ Widget buildFullControls(
         Positioned.fill(
           child: GestureDetector(
             onTap: controller.onTap,
-            onDoubleTapDown: controller.onDoubleTap,
+            onDoubleTap: controller.onDoubleTap,
             onLongPress: () {
               if (controller.lockControlsState.value) {
                 return;
@@ -541,7 +541,7 @@ Widget buildControls(
       Positioned.fill(
         child: GestureDetector(
           onTap: controller.onTap,
-          onDoubleTapDown: controller.onDoubleTap,
+          onDoubleTap: controller.onDoubleTap,
           onVerticalDragStart: controller.onVerticalDragStart,
           onVerticalDragUpdate: controller.onVerticalDragUpdate,
           onVerticalDragEnd: controller.onVerticalDragEnd,
@@ -725,7 +725,7 @@ Widget buildControls(
 }
 
 Widget buildDanmuView(VideoState videoState, LiveRoomController controller) {
-  var padding = MediaQuery.of(videoState.context).padding;
+  var padding = MediaQuery.paddingOf(videoState.context);
   controller.danmakuView ??= DanmakuScreen(
     key: controller.globalDanmuKey,
     createdController: controller.initDanmakuController,

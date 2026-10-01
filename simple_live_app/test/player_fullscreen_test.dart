@@ -8,7 +8,12 @@ import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:window_manager/window_manager.dart';
 
 class _TestPlayer
-    with PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin, PlayerSystemMixin {}
+    with
+        PlayerMixin,
+        PlayerStateMixin,
+        PlayerDanmakuMixin,
+        PlayerSystemMixin,
+        PlayerGestureControlMixin {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -97,6 +102,26 @@ void main() {
     await controller.exitFull();
     expect(calls, ['setFullScreen', 'setTitleBarStyle']);
   });
+
+  for (final wasMaximized in [false, true]) {
+    test('${wasMaximized ? "大屏" : "小屏"}双击进入再双击退出恢复原窗口状态', () async {
+      maximized = wasMaximized;
+      final controller = _TestPlayer();
+      controller.onDoubleTap();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(controller.fullScreenState.value, isTrue);
+
+      calls.clear();
+      controller.onDoubleTap();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(controller.fullScreenState.value, isFalse);
+      expect(calls, [
+        'setFullScreen',
+        'setTitleBarStyle',
+        if (wasMaximized) 'maximize',
+      ]);
+    });
+  }
 
   test('小窗退出恢复窗口，不走普通全屏退出', () async {
     final controller = _TestPlayer();
