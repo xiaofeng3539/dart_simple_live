@@ -97,7 +97,7 @@ class LiveRoomPage extends StatelessWidget {
               controller.exitFull();
             },
             child: Scaffold(
-              body: RepaintBoundary(child: buildMediaPlayer()),
+              body: buildMediaPlayer(),
             ),
           );
         } else {
@@ -140,7 +140,7 @@ class LiveRoomPage extends StatelessWidget {
       children: [
         AspectRatio(
           aspectRatio: 16 / 9,
-          child: RepaintBoundary(child: buildMediaPlayer()),
+          child: buildMediaPlayer(),
         ),
         buildUserProfile(context),
         buildMessageArea(),
@@ -156,7 +156,7 @@ class LiveRoomPage extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: RepaintBoundary(child: buildMediaPlayer()),
+                child: buildMediaPlayer(),
               ),
               SizedBox(
                 width: 300,

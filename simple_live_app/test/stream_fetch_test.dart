@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:dio/dio.dart';
@@ -26,6 +27,19 @@ class _Douyu extends DouyuSite {
       String roomId, String args, int rate, String cdn) async {
     if (cdn == '失败') throw StateError('线路失败');
     return 'https://example.com/live.flv';
+  }
+}
+
+class _SlowDouyu extends DouyuSite {
+  final started = <String>[];
+  final release = Completer<void>();
+
+  @override
+  Future<String> getPlayUrl(
+      String roomId, String args, int rate, String cdn) async {
+    started.add(cdn);
+    await release.future;
+    return 'https://example.com/$cdn.flv';
   }
 }
 
@@ -94,6 +108,36 @@ void main() {
       'https://first.example.com/live.flv',
       'https://second.example.com/live.flv',
       'https://mcdn.example.com/live.flv',
+    ]);
+  });
+  test('B站优先 AVC 并保留 HEVC 备用流', () async {
+    final dio = core.HttpClient.instance.dio;
+    final interceptor = InterceptorsWrapper(onRequest: (request, handler) {
+      expect(request.queryParameters['codec'], '0,1');
+      handler.resolve(Response(requestOptions: request, data: {
+        'data': {'playurl_info': {'playurl': {'stream': [
+          {'format': [
+            {'codec': [
+              {'codec_name': 'hevc', 'base_url': '/hevc.flv', 'url_info': [
+                {'host': 'https://hevc.example.com', 'extra': ''}
+              ]},
+              {'codec_name': 'avc', 'base_url': '/avc.flv', 'url_info': [
+                {'host': 'https://avc.example.com', 'extra': ''}
+              ]},
+            ]}
+          ]}
+        ]}}}
+      }));
+    });
+    dio.interceptors.add(interceptor);
+    addTearDown(() => dio.interceptors.remove(interceptor));
+    final urls = await _Bili().getPlayUrls(
+      detail: _detail(),
+      quality: LivePlayQuality(quality: '', data: 10000),
+    );
+    expect(urls.urls, [
+      'https://avc.example.com/avc.flv',
+      'https://hevc.example.com/hevc.flv',
     ]);
   });
   test('斗鱼空数据及非法地址不会变成播放链接', () async {
@@ -236,6 +280,22 @@ void main() {
           quality: '', data: DouyuPlayData(0, ['失败', '线路一', '线路二'])),
     );
     expect(urls.urls, ['https://example.com/live.flv']);
+  });
+  test('斗鱼备用线路同时请求且结果保持原顺序', () async {
+    final site = _SlowDouyu();
+    final pending = site.getPlayUrls(
+      detail: _detail(),
+      quality: LivePlayQuality(
+          quality: '原画', data: DouyuPlayData(0, ['线路一', '线路二'])),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(site.started, ['线路一', '线路二']);
+    site.release.complete();
+    final urls = await pending;
+    expect(urls.urls, [
+      'https://example.com/线路一.flv',
+      'https://example.com/线路二.flv'
+    ]);
   });
   test('抖音读取地址不会修改画质原数据', () async {
     final original = [

@@ -165,7 +165,7 @@ class BiliBiliSite implements LiveSite {
         "room_id": detail.roomId,
         "protocol": "0,1",
         "format": "0,2",
-        "codec": "0",
+        "codec": "0,1",
         "platform": "web",
         "qn": quality.data,
       },
@@ -175,7 +175,9 @@ class BiliBiliSite implements LiveSite {
     for (var streamItem in streamList) {
       var formatList = streamItem["format"];
       for (var formatItem in formatList) {
-        var codecList = formatItem["codec"];
+        var codecList = [...formatItem["codec"]]
+          ..sort((a, b) => (a["codec_name"] == "avc" ? 0 : 1)
+              .compareTo(b["codec_name"] == "avc" ? 0 : 1));
         for (var codecItem in codecList) {
           var urlList = codecItem["url_info"];
           var baseUrl = codecItem["base_url"].toString();

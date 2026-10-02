@@ -139,18 +139,18 @@ class DouyuSite implements LiveSite {
     var args = detail.data.toString();
     var data = quality.data as DouyuPlayData;
 
-    List<String> urls = [];
-    for (var item in data.cdns) {
-      try {
-        var url = await getPlayUrl(detail.roomId, args, data.rate, item);
-        if (url.isNotEmpty && !urls.contains(url)) {
-          urls.add(url);
+    final resolved = await Future.wait(
+      data.cdns.map((item) async {
+        try {
+          return await getPlayUrl(detail.roomId, args, data.rate, item);
+        } catch (e) {
+          // 单条线路失败时继续读取其他线路。
+          CoreLog.error(e);
+          return '';
         }
-      } catch (e) {
-        // 单条线路失败时继续读取其他线路。
-        CoreLog.error(e);
-      }
-    }
+      }),
+    );
+    final urls = resolved.where((url) => url.isNotEmpty).toSet().toList();
     return LivePlayUrl(urls: urls);
   }
 

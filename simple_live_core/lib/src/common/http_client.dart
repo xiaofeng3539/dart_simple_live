@@ -3,6 +3,10 @@ import 'package:dio/dio.dart';
 
 import 'custom_interceptor.dart';
 
+CoreError _networkError(String method, Object error) => CoreError(
+  '发送$method请求失败（${error is DioException ? error.type.name : error.runtimeType}）',
+);
+
 class HttpClient {
   static HttpClient? _httpUtil;
 
@@ -51,7 +55,7 @@ class HttpClient {
         throw CoreError(e.message ?? "",
             statusCode: e.response?.statusCode ?? 0);
       } else {
-        throw CoreError("发送GET请求失败");
+        throw _networkError('GET', e);
       }
     }
   }
@@ -84,7 +88,7 @@ class HttpClient {
         throw CoreError(e.message ?? "",
             statusCode: e.response?.statusCode ?? 0);
       } else {
-        throw CoreError("发送GET请求失败");
+        throw _networkError('GET', e);
       }
     }
   }
@@ -124,7 +128,7 @@ class HttpClient {
         throw CoreError(e.message ?? "",
             statusCode: e.response?.statusCode ?? 0);
       } else {
-        throw CoreError("发送POST请求失败");
+        throw _networkError('POST', e);
       }
     }
   }
@@ -157,7 +161,7 @@ class HttpClient {
         //throw CoreError(e.message, statusCode: e.response?.statusCode ?? 0);
         return e.response!;
       } else {
-        throw CoreError("发送HEAD请求失败");
+        throw _networkError('HEAD', e);
       }
     }
   }

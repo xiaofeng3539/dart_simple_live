@@ -25,6 +25,7 @@ import 'package:window_manager/window_manager.dart';
 mixin PlayerMixin {
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
   GlobalKey globalDanmuKey = GlobalKey();
+  Future<void>? _playerInitialization;
 
   /// 播放器实例
   late final player = Player(
@@ -36,8 +37,26 @@ mixin PlayerMixin {
     ),
   );
 
-  /// 初始化播放器并设置 ao 参数
+  /// 同一播放器只配置一次；失败时允许下次打开直播流重新尝试。
   Future<void> initializePlayer() async {
+    final pending = _playerInitialization;
+    if (pending != null) {
+      await pending;
+      return;
+    }
+    final initialization = _configurePlayer();
+    _playerInitialization = initialization;
+    try {
+      await initialization;
+    } catch (_) {
+      if (identical(_playerInitialization, initialization)) {
+        _playerInitialization = null;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _configurePlayer() async {
     var pp = player.platform as NativePlayer;
     // 直播使用内存缓冲，短暂抖动后补足缓存再恢复，避免反复转圈。
     await pp.setProperty('cache-on-disk', 'no');

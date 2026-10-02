@@ -58,6 +58,11 @@ class _Room extends LiveRoomController {
   int refreshes = 0;
   int screenshots = 0;
   int enters = 0;
+  int followSheets = 0;
+  int settingSheets = 0;
+  int qualitySheets = 0;
+  int lineSheets = 0;
+  int danmakuSheets = 0;
   @override
   Future<void> exitFull() async {
     exits++;
@@ -77,6 +82,16 @@ class _Room extends LiveRoomController {
   Future<void> enterFullScreen() async {
     enters++;
   }
+  @override
+  void showFollowUserSheet() => followSheets++;
+  @override
+  void showPlayerSettingsSheet() => settingSheets++;
+  @override
+  void showQualitySheet() => qualitySheets++;
+  @override
+  void showPlayUrlsSheet() => lineSheets++;
+  @override
+  void showDanmuSettingsSheet() => danmakuSheets++;
 }
 
 void main() {
@@ -147,6 +162,7 @@ void main() {
       room.fullScreenState.value = full;
       room.showControlsState.value = true;
       await tester.pumpWidget(MaterialApp(
+          theme: ThemeData(splashFactory: NoSplash.splashFactory),
           home: Scaffold(
               body: RawGestureDetector(
                   gestures: {
@@ -169,17 +185,78 @@ void main() {
       if (full) {
         await tester.tap(find.byIcon(Icons.camera_alt_outlined));
         expect(room.screenshots, 1);
-        await tester.tap(find.byIcon(Icons.arrow_back));
+        await tester.tap(find.byIcon(Remix.fullscreen_exit_fill));
         expect(room.exits, 1);
+        await tester.tap(find.byIcon(Icons.arrow_back));
+        expect(room.exits, 2);
       }
       final point = tester.getCenter(find.byType(Scaffold));
       await tester.tapAt(point);
       await tester.pump(const Duration(milliseconds: 80));
       await tester.tapAt(point);
       await tester.pump(const Duration(milliseconds: 80));
-      expect(full ? room.exits : room.enters, full ? 2 : 1);
+      expect(full ? room.exits : room.enters, full ? 3 : 1);
       await tester.pumpWidget(const SizedBox.shrink());
       room.hideControlsTimer?.cancel();
     });
   }
+  testWidgets('竖屏全屏右上角和右下角按钮可点击', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1080, 1920);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final room = _Room();
+    room.fullScreenState.value = true;
+    room.showControlsState.value = true;
+    room.showDanmakuState.value = true;
+    room.isVertical.value = true;
+    room.currentQualityInfo.value = '原画';
+    room.currentLineInfo.value = '线路1';
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(splashFactory: NoSplash.splashFactory),
+      home: Scaffold(body: Builder(
+        builder: (context) => buildFullControls(_VideoState(context), room),
+      )),
+    ));
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byIcon(Icons.camera_alt_outlined));
+    expect(room.screenshots, 1);
+    await tester.tap(find.byIcon(Remix.play_list_2_line));
+    expect(room.followSheets, 1);
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    expect(room.settingSheets, 1);
+    await tester.tap(find.text('原画'));
+    expect(room.qualitySheets, 1);
+    await tester.tap(find.text('线路1'));
+    expect(room.lineSheets, 1);
+    await tester.tap(find.byType(ImageIcon).last);
+    expect(room.danmakuSheets, 1);
+    await tester.tap(find.byIcon(Remix.fullscreen_exit_fill));
+    expect(room.exits, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+    room.hideControlsTimer?.cancel();
+  });
+  testWidgets('切换为全屏并改变尺寸后，右侧按钮继续响应', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 720);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final room = _Room();
+    room.showControlsState.value = true;
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(splashFactory: NoSplash.splashFactory),
+      home: Scaffold(body: Builder(
+        builder: (context) => playerControls(_VideoState(context), room),
+      )),
+    ));
+    room.fullScreenState.value = true;
+    tester.view.physicalSize = const Size(1920, 1080);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byIcon(Icons.camera_alt_outlined));
+    expect(room.screenshots, 1);
+    await tester.tap(find.byIcon(Remix.fullscreen_exit_fill));
+    expect(room.exits, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+    room.hideControlsTimer?.cancel();
+  });
 }

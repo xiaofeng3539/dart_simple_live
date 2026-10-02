@@ -123,6 +123,18 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   bool _isCurrentRequest(int request) =>
       !_roomClosed && request == _playRequest;
 
+  Future<T> _retryPlayRequest<T>(
+      Future<T> Function() request, int generation) async {
+    try {
+      return await request();
+    } catch (_) {
+      if (!_isCurrentRequest(generation)) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (!_isCurrentRequest(generation)) rethrow;
+      return request();
+    }
+  }
+
   @override
   void onInit() {
     WidgetsBinding.instance.addObserver(this);
@@ -394,14 +406,13 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     currentQuality = -1;
 
     try {
-      var playQualites =
-          await site.liveSite.getPlayQualites(detail: detail.value!);
+      var playQualites = await _retryPlayRequest(() async {
+        final result =
+            await site.liveSite.getPlayQualites(detail: detail.value!);
+        if (result.isEmpty) throw StateError('播放清晰度列表为空');
+        return result;
+      }, request);
       if (!_isCurrentRequest(request)) return;
-
-      if (playQualites.isEmpty) {
-        SmartDialog.showToast("无法读取播放清晰度");
-        return;
-      }
       qualites.value = playQualites;
       var qualityLevel = await getQualityLevel();
       if (!_isCurrentRequest(request)) return;
@@ -450,13 +461,13 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     final quality = qualites[currentQuality];
     final roomDetail = detail.value!;
     try {
-      final playUrl =
-          await site.liveSite.getPlayUrls(detail: roomDetail, quality: quality);
+      final playUrl = await _retryPlayRequest(() async {
+        final result = await site.liveSite
+            .getPlayUrls(detail: roomDetail, quality: quality);
+        if (result.urls.isEmpty) throw StateError('播放地址列表为空');
+        return result;
+      }, currentRequest);
       if (!_isCurrentRequest(currentRequest)) return;
-      if (playUrl.urls.isEmpty) {
-        SmartDialog.showToast("无法读取播放地址");
-        return;
-      }
       playUrls.value = playUrl.urls;
       playHeaders = playUrl.headers;
       currentQualityInfo.value = quality.quality;
@@ -578,7 +589,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     _recoveringPlayback = true;
     _bufferingTimer?.cancel();
     try {
-      if (site.id == Constant.kHuya && detail.value != null &&
+      if ((site.id == Constant.kHuya || site.id == Constant.kBiliBili) &&
+          detail.value != null &&
           currentQuality >= 0 && currentQuality < qualites.length) {
         final line = currentLineIndex;
         final oldUri = Uri.tryParse(playUrls[line]);
@@ -596,7 +608,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
             currentLineIndex = sameLine >= 0 ? sameLine : -1;
           }
         } catch (e) {
-          Log.d('虎牙恢复鉴权失败：${e.runtimeType}');
+          Log.d('${site.name}重新获取播放地址失败：${e.runtimeType}');
         }
         if (!_isCurrentRequest(request) || isBackground) return;
       }

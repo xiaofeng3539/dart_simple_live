@@ -57,6 +57,32 @@ class _Huya extends HuyaSite {
   }
 }
 
+class _FlakyHuya extends HuyaSite {
+  int calls = 0;
+  @override
+  Future<LivePlayUrl> getPlayUrls(
+      {required LiveRoomDetail detail,
+      required LivePlayQuality quality}) async {
+    calls++;
+    if (calls == 1) throw StateError('暂时无法获取播放地址');
+    return LivePlayUrl(urls: ['https://example.com/live.flv']);
+  }
+}
+
+class _Bili extends BiliBiliSite {
+  int calls = 0;
+  @override
+  Future<LivePlayUrl> getPlayUrls(
+      {required LiveRoomDetail detail,
+      required LivePlayQuality quality}) async {
+    calls++;
+    return LivePlayUrl(urls: [
+      'https://first/live.flv?token=new',
+      'https://next/live.flv?token=new',
+    ]);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -72,6 +98,31 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(room.fake.opens, 1);
     expect(room.fake.jumps, 0);
+  });
+  testWidgets('首次获取播放地址失败后只重试一次并启动播放', (tester) async {
+    final source = _FlakyHuya();
+    final room = _Room(
+        source: Site(id: 'huya', name: '', logo: '', liveSite: source));
+    room.detail.value = LiveRoomDetail(
+        roomId: '1',
+        title: '',
+        cover: '',
+        userName: '',
+        userAvatar: '',
+        online: 0,
+        status: true,
+        url: '',
+        data: '');
+    room.qualites.add(LivePlayQuality(quality: '原画', data: {}));
+    room.currentQuality = 0;
+
+    room.getPlayUrl();
+    await tester.pump();
+    expect(source.calls, 1);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+    expect(source.calls, 2);
+    expect(room.fake.opens, 1);
   });
   testWidgets('持续缓冲15秒切换备用线路', (tester) async {
     final room = _Room();
@@ -205,6 +256,27 @@ void main() {
     room.playUrls.addAll([
       'https://first/live.flv?token=old',
       'https://next/live.flv?token=old'
+    ]);
+    room.mediaError('断流');
+    await tester.pump(const Duration(seconds: 3));
+    expect(site.calls, 1);
+    expect(room.playUrls.last, contains('token=new'));
+    expect(room.fake.opens, 1);
+    expect(room.currentLineIndex, 1);
+  });
+  testWidgets('B站断流时刷新过期播放地址', (tester) async {
+    final site = _Bili();
+    final room = _Room(
+        source: Site(id: 'bilibili', name: '', logo: '', liveSite: site));
+    room.detail.value = LiveRoomDetail(
+        roomId: '1', title: '', cover: '', userName: '', userAvatar: '',
+        online: 0, status: true, url: '', data: '');
+    room.qualites.add(LivePlayQuality(quality: '原画', data: 10000));
+    room.currentQuality = 0;
+    room.currentLineIndex = 0;
+    room.playUrls.addAll([
+      'https://first/live.flv?token=old',
+      'https://next/live.flv?token=old',
     ]);
     room.mediaError('断流');
     await tester.pump(const Duration(seconds: 3));
