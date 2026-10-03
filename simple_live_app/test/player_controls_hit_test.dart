@@ -2,18 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
+import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/app/utils/listen_fourth_button.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
+import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 
 class _Settings extends AppSettingsController {
   // 测试不初始化持久化设置。
+  @override
+  // ignore: must_call_super
+  void onInit() {}
+}
+
+class _Follows extends FollowService {
   @override
   // ignore: must_call_super
   void onInit() {}
@@ -95,6 +105,84 @@ class _Room extends LiveRoomController {
 }
 
 void main() {
+  final buttons = <String, Finder Function()>{
+    '关注列表': () => find.byIcon(Remix.play_list_2_line),
+    '设置': () => find.byIcon(Icons.more_horiz),
+    '清晰度': () => find.text('原画'),
+    '线路': () => find.text('线路1'),
+    '弹幕设置': () => find.byType(ImageIcon).last,
+  };
+  for (final button in buttons.entries) {
+    testWidgets('全屏${button.key}按钮实际打开可见弹层', (tester) async {
+      Get.put<FollowService>(_Follows());
+      final room = _Room();
+      room.fullScreenState.value = true;
+      room.showControlsState.value = true;
+      room.showDanmakuState.value = true;
+      room.currentQualityInfo.value = '原画';
+      room.currentLineInfo.value = '线路1';
+      room.qualites.add(LivePlayQuality(quality: '原画', data: {}));
+      room.playUrls.add('https://example.com/live.flv');
+      await tester.pumpWidget(GetMaterialApp(
+        theme: ThemeData(splashFactory: NoSplash.splashFactory),
+        navigatorObservers: [FlutterSmartDialog.observer],
+        builder: FlutterSmartDialog.init(),
+        home: Scaffold(body: Builder(
+          builder: (context) => buildFullControls(_VideoState(context), room),
+        )),
+      ));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(button.value());
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text(button.key), findsWidgets);
+      SmartDialog.dismiss(status: SmartStatus.allCustom);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpWidget(const SizedBox.shrink());
+      room.hideControlsTimer?.cancel();
+    });
+  }
+  testWidgets('播放器右侧系统弹层在导航页上可见', (tester) async {
+    await tester.pumpWidget(GetMaterialApp(
+      theme: ThemeData(splashFactory: NoSplash.splashFactory),
+      navigatorObservers: [FlutterSmartDialog.observer],
+      builder: FlutterSmartDialog.init(),
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => Utils.showRightDialog(
+              title: '线路',
+              useSystem: true,
+              child: const Text('线路1'),
+            ),
+            child: const Text('打开线路'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('打开线路'));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('线路1'), findsOneWidget);
+  });
+  testWidgets('播放器底部弹层在全屏页面可见', (tester) async {
+    await tester.pumpWidget(GetMaterialApp(
+      theme: ThemeData(splashFactory: NoSplash.splashFactory),
+      home: PopScope(
+        canPop: false,
+        child: Scaffold(
+          body: TextButton(
+            onPressed: () => Utils.showBottomSheet(
+              title: '切换线路',
+              child: const Text('线路1'),
+            ),
+            child: const Text('打开线路'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('打开线路'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('线路1'), findsOneWidget);
+  });
   test('鼠标侧键识别器不参与左键和触摸手势竞争', () {
     final recognizer = FourthButtonTapGestureRecognizer();
     expect(

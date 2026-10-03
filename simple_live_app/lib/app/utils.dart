@@ -140,37 +140,40 @@ class Utils {
             bottomLeft: Radius.circular(4),
           ),
         ),
-        child: SafeArea(
-          left: false,
-          right: false,
-          child: MediaQuery(
-            data: const MediaQueryData(padding: EdgeInsets.zero),
-            child: Column(
-              children: [
-                ListTile(
-                  visualDensity: VisualDensity.compact,
-                  contentPadding: EdgeInsets.zero,
-                  leading: IconButton(
-                    onPressed: () {
-                      SmartDialog.dismiss(status: SmartStatus.allCustom).then(
-                        (value) => onDismiss?.call(),
-                      );
-                    },
-                    icon: const Icon(Icons.arrow_back),
+        child: Material(
+          type: MaterialType.transparency,
+          child: SafeArea(
+            left: false,
+            right: false,
+            child: MediaQuery(
+              data: const MediaQueryData(padding: EdgeInsets.zero),
+              child: Column(
+                children: [
+                  ListTile(
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: EdgeInsets.zero,
+                    leading: IconButton(
+                      onPressed: () {
+                        SmartDialog.dismiss(status: SmartStatus.allCustom).then(
+                          (value) => onDismiss?.call(),
+                        );
+                      },
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                    title: Text(
+                      title,
+                      style: Get.textTheme.titleMedium,
+                    ),
                   ),
-                  title: Text(
-                    title,
-                    style: Get.textTheme.titleMedium,
+                  Divider(
+                    height: 1,
+                    color: Colors.grey.withAlpha(25),
                   ),
-                ),
-                Divider(
-                  height: 1,
-                  color: Colors.grey.withAlpha(25),
-                ),
-                Expanded(
-                  child: child,
-                ),
-              ],
+                  Expanded(
+                    child: child,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
