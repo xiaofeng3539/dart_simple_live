@@ -123,42 +123,51 @@ class CustomPlatformViewController
     if (_isDisposed) {
       return;
     }
-    _textureId = (await _pluginChannel.invokeMethod<int>(
-        'createInAppWebView', arguments))!;
-
-    _methodChannel =
-        MethodChannel('com.pichillilorenzo/custom_platform_view_$_textureId');
-    _eventChannel = EventChannel(
-        'com.pichillilorenzo/custom_platform_view_${_textureId}_events');
-    _eventStreamSubscription =
-        _eventChannel.receiveBroadcastStream().listen((event) {
-      final map = event as Map<dynamic, dynamic>;
-      switch (map['type']) {
-        case 'cursorChanged':
-          _cursorStreamController.add(_getCursorByName(map['value']));
-          break;
+    try {
+      _textureId = (await _pluginChannel.invokeMethod<int>(
+          'createInAppWebView', arguments))!;
+      if (_isDisposed) {
+        await _pluginChannel.invokeMethod('dispose', {"id": _textureId});
+        return;
       }
-    });
 
-    _methodChannel.setMethodCallHandler((call) {
-      throw MissingPluginException('Unknown method ${call.method}');
-    });
+      _methodChannel =
+          MethodChannel('com.pichillilorenzo/custom_platform_view_$_textureId');
+      _eventChannel = EventChannel(
+          'com.pichillilorenzo/custom_platform_view_${_textureId}_events');
+      _eventStreamSubscription =
+          _eventChannel.receiveBroadcastStream().listen((event) {
+        final map = event as Map<dynamic, dynamic>;
+        switch (map['type']) {
+          case 'cursorChanged':
+            _cursorStreamController.add(_getCursorByName(map['value']));
+            break;
+        }
+      });
 
-    value = value.copyWith(isInitialized: true);
+      _methodChannel.setMethodCallHandler((call) {
+        throw MissingPluginException('Unknown method ${call.method}');
+      });
 
-    _creatingCompleter.complete();
+      value = value.copyWith(isInitialized: true);
 
-    onPlatformViewCreated?.call(_textureId);
+      onPlatformViewCreated?.call(_textureId);
+    } finally {
+      // 创建失败也结束等待，页面才能正常释放并重新创建组件。
+      _creatingCompleter.complete();
+    }
   }
 
   @override
   Future<void> dispose() async {
+    if (_isDisposed) return;
+    _isDisposed = true;
     await _creatingCompleter.future;
-    if (!_isDisposed) {
-      _isDisposed = true;
+    if (value.isInitialized) {
       await _eventStreamSubscription?.cancel();
       await _pluginChannel.invokeMethod('dispose', {"id": _textureId});
     }
+    await _cursorStreamController.close();
     super.dispose();
   }
 
@@ -276,12 +285,21 @@ class _CustomPlatformViewState extends State<CustomPlatformView> {
   void initState() {
     super.initState();
 
-    _controller.initialize(
-        onPlatformViewCreated: (id) {
-          widget.onPlatformViewCreated?.call(id);
-          setState(() {});
-        },
-        arguments: widget.creationParams);
+    _controller
+        .initialize(
+            onPlatformViewCreated: (id) {
+              widget.onPlatformViewCreated?.call(id);
+              if (mounted) setState(() {});
+            },
+            arguments: widget.creationParams)
+        .catchError((Object error, StackTrace stackTrace) {
+      FlutterError.reportError(FlutterErrorDetails(
+        exception: error,
+        stack: stackTrace,
+        library: 'flutter_inappwebview_windows',
+        context: ErrorDescription('创建 Windows 网页组件失败'),
+      ));
+    });
 
     // Report initial surface size and widget position
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -414,6 +432,7 @@ class _CustomPlatformViewState extends State<CustomPlatformView> {
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
     if (box != null) {
       await _controller.ready;
+      if (!mounted || !_controller.value.isInitialized) return;
       unawaited(_controller._setSize(
           box.size, widget.scaleFactor ?? window.devicePixelRatio));
     }
@@ -423,6 +442,7 @@ class _CustomPlatformViewState extends State<CustomPlatformView> {
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
     if (box != null) {
       await _controller.ready;
+      if (!mounted || !_controller.value.isInitialized) return;
       final position = box.localToGlobal(Offset.zero);
       unawaited(_controller._setPosition(
           position, widget.scaleFactor ?? window.devicePixelRatio));

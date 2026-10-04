@@ -18,6 +18,7 @@ class AppSearchController extends GetxController {
   final webViewVisible = true.obs;
   final webViewLoading = false.obs;
   final webViewError = RxnString();
+  final webViewRevision = 0.obs;
   void Function(String roomId)? onRoomDetected;
   String? _lastPromptedRoom;
   InAppWebViewController? webViewController;
@@ -29,16 +30,31 @@ class AppSearchController extends GetxController {
 
   Future<WebViewEnvironment?> _createWebViewEnvironment() async {
     if (!Platform.isWindows) return null;
+    final revision = webViewRevision.value;
     try {
       final supportDir = await getApplicationSupportDirectory();
       final profileDir = Directory(p.join(supportDir.path, 'search_webview'));
       await profileDir.create(recursive: true);
-      return await WebViewEnvironment.create(
+      final creation = WebViewEnvironment.create(
         settings: WebViewEnvironmentSettings(userDataFolder: profileDir.path),
       );
+      try {
+        return await creation.timeout(const Duration(seconds: 20));
+      } on TimeoutException {
+        // 超时不能取消原生创建；迟到的环境创建成功后仍需释放。
+        unawaited(creation
+            .then((environment) => environment.dispose())
+            .catchError((Object error, StackTrace stackTrace) {
+          Log.e('释放超时网页环境失败：$error', stackTrace);
+        }));
+        rethrow;
+      }
     } catch (error, stackTrace) {
-      Log.e('搜索页 WebView2 专用环境启动失败，改用默认环境：$error', stackTrace);
-      return null;
+      Log.e('搜索页 WebView2 环境启动失败：$error', stackTrace);
+      if (!isClosed && webViewRevision.value == revision) {
+        failLoading('网页组件启动失败，请点击右上角刷新重试');
+      }
+      rethrow;
     }
   }
 
@@ -84,8 +100,26 @@ class AppSearchController extends GetxController {
   }
 
   Future<void> reloadWebView() async {
+    final recreate = Platform.isWindows &&
+        (webViewController == null || webViewError.value != null);
+    if (recreate) {
+      webViewController = null;
+      _disposeWebViewEnvironment();
+      webViewRevision.value++;
+    }
     startLoading();
-    await webViewController?.reload();
+    if (!recreate) await webViewController?.reload();
+  }
+
+  void _disposeWebViewEnvironment() {
+    final pending = _webViewEnvironment;
+    _webViewEnvironment = null;
+    if (pending == null) return;
+    unawaited(pending.then((environment) async {
+      await environment?.dispose();
+    }).catchError((Object error, StackTrace stackTrace) {
+      Log.e('释放搜索网页环境失败：$error', stackTrace);
+    }));
   }
 
   void startLoading() {
@@ -113,6 +147,7 @@ class AppSearchController extends GetxController {
   @override
   void onClose() {
     _loadTimer?.cancel();
+    _disposeWebViewEnvironment();
     super.onClose();
   }
 

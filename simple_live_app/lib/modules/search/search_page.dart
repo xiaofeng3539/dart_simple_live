@@ -53,21 +53,25 @@ class SearchPage extends GetView<AppSearchController> {
       body: Obx(() {
         final site = controller.selectedSite.value;
         if (site == null) return _platformPicker(context);
+        final revision = controller.webViewRevision.value;
+        bool isCurrentView() =>
+            controller.selectedSite.value == site &&
+            controller.webViewRevision.value == revision &&
+            !controller.isClosed;
         return FutureBuilder<WebViewEnvironment?>(
+          key: ValueKey(revision),
           future: controller.webViewEnvironment,
           builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return const Center(child: Text('网页组件启动失败，请重启应用后重试'));
-            }
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
+            if (snapshot.hasError ||
+                snapshot.connectionState != ConnectionState.done) {
+              return _webViewStatus(initializing: true);
             }
             return Stack(
               children: [
                 Offstage(
                   offstage: !controller.webViewVisible.value,
                   child: InAppWebView(
-                    key: ValueKey(site.id),
+                    key: ValueKey('${site.id}:$revision'),
                     webViewEnvironment: snapshot.data,
                     initialUrlRequest: URLRequest(
                       url: WebUri(SearchRoomUrl.homeUriFor(site.id).toString()),
@@ -97,6 +101,7 @@ class SearchPage extends GetView<AppSearchController> {
                           ])
                         : null,
                     onWebViewCreated: (webViewController) {
+                      if (!isCurrentView()) return;
                       controller.webViewController = webViewController;
                       controller.onRoomDetected = _showRoomPrompt;
                       if (site.id == Constant.kDouyin) {
@@ -118,47 +123,28 @@ class SearchPage extends GetView<AppSearchController> {
                       }
                     },
                     onLoadStart: (_, uri) {
+                      if (!isCurrentView()) return;
                       controller.startLoading();
                       controller.updateUrl(uri);
                     },
                     onLoadStop: (_, uri) {
+                      if (!isCurrentView()) return;
                       controller.finishLoading();
                       controller.updateUrl(uri);
                     },
                     onReceivedError: (_, request, __) {
+                      if (!isCurrentView()) return;
                       if (request.isForMainFrame == true) {
                         controller.failLoading('网页加载失败，请点击右上角刷新重试');
                       }
                     },
-                    onUpdateVisitedHistory: (_, uri, __) =>
-                        controller.updateUrl(uri),
+                    onUpdateVisitedHistory: (_, uri, __) {
+                      if (isCurrentView()) controller.updateUrl(uri);
+                    },
                     onCreateWindow: (_, action) => controller.openPopup(action),
                   ),
                 ),
-                Obx(() {
-                  if (!controller.webViewVisible.value) {
-                    return const SizedBox.shrink();
-                  }
-                  final error = controller.webViewError.value;
-                  if (error != null) {
-                    return Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(error),
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: controller.reloadWebView,
-                            child: const Text('重新加载'),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-                  return controller.webViewLoading.value
-                      ? const Center(child: CircularProgressIndicator())
-                      : const SizedBox.shrink();
-                }),
+                _webViewStatus(),
               ],
             );
           },
@@ -192,6 +178,29 @@ class SearchPage extends GetView<AppSearchController> {
       }),
     );
   }
+
+  Widget _webViewStatus({bool initializing = false}) => Obx(() {
+        if (!controller.webViewVisible.value) return const SizedBox.shrink();
+        final error = controller.webViewError.value;
+        if (error != null) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(error),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: controller.reloadWebView,
+                  child: const Text('重新加载'),
+                ),
+              ],
+            ),
+          );
+        }
+        return controller.webViewLoading.value || initializing
+            ? const Center(child: CircularProgressIndicator())
+            : const SizedBox.shrink();
+      });
 
   void _showRoomPrompt(String roomId) async {
     await Future<void>.delayed(Duration.zero);

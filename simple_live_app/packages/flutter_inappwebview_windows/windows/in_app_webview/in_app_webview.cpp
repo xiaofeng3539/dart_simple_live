@@ -72,6 +72,7 @@ namespace flutter_inappwebview_plugin
         wil::com_ptr<ICoreWebView2Environment3> webViewEnv3;
         wil::com_ptr<ICoreWebView2Environment10> webViewEnv10;
         wil::com_ptr<ICoreWebView2ControllerOptions> options;
+        HRESULT controllerHr = E_FAIL;
         if (initialSettings && succeededOrLog(env->QueryInterface(IID_PPV_ARGS(&webViewEnv10))) && succeededOrLog(webViewEnv10->CreateCoreWebView2ControllerOptions(&options))) {
           options->put_IsInPrivateModeEnabled(initialSettings->incognito);
         }
@@ -82,7 +83,7 @@ namespace flutter_inappwebview_plugin
         }
         if (willBeSurface && (webViewEnv10 || webViewEnv3)) {
           if (webViewEnv10 && options) {
-            failedLog(webViewEnv10->CreateCoreWebView2CompositionControllerWithOptions(parentWindow, options.get(), Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
+            controllerHr = webViewEnv10->CreateCoreWebView2CompositionControllerWithOptions(parentWindow, options.get(), Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
               [completionHandler, env](HRESULT result, wil::com_ptr<ICoreWebView2CompositionController> compositionController) -> HRESULT
               {
                 wil::com_ptr<ICoreWebView2Controller3> webViewController = compositionController.try_query<ICoreWebView2Controller3>();
@@ -102,10 +103,10 @@ namespace flutter_inappwebview_plugin
                 completionHandler(std::move(env), std::move(webViewController), std::move(compositionController));
                 return S_OK;
               }
-            ).Get()));
+            ).Get());
           }
           else {
-            failedLog(webViewEnv3->CreateCoreWebView2CompositionController(parentWindow, Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
+            controllerHr = webViewEnv3->CreateCoreWebView2CompositionController(parentWindow, Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
               [completionHandler, env](HRESULT result, wil::com_ptr<ICoreWebView2CompositionController> compositionController) -> HRESULT
               {
                 wil::com_ptr<ICoreWebView2Controller3> webViewController = compositionController.try_query<ICoreWebView2Controller3>();
@@ -125,12 +126,12 @@ namespace flutter_inappwebview_plugin
                 completionHandler(std::move(env), std::move(webViewController), std::move(compositionController));
                 return S_OK;
               }
-            ).Get()));
+            ).Get());
           }
         }
         else {
           if (webViewEnv10 && options) {
-            failedLog(webViewEnv10->CreateCoreWebView2ControllerWithOptions(parentWindow, options.get(), Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+            controllerHr = webViewEnv10->CreateCoreWebView2ControllerWithOptions(parentWindow, options.get(), Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
               [completionHandler, env](HRESULT result, wil::com_ptr<ICoreWebView2Controller> controller) -> HRESULT
               {
                 if (failedAndLog(result) || !controller) {
@@ -140,10 +141,10 @@ namespace flutter_inappwebview_plugin
 
                 completionHandler(std::move(env), std::move(controller), nullptr);
                 return S_OK;
-              }).Get()));
+              }).Get());
           }
           else {
-            failedLog(env->CreateCoreWebView2Controller(parentWindow, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+            controllerHr = env->CreateCoreWebView2Controller(parentWindow, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
               [completionHandler, env](HRESULT result, wil::com_ptr<ICoreWebView2Controller> controller) -> HRESULT
               {
                 if (failedAndLog(result) || !controller) {
@@ -153,8 +154,12 @@ namespace flutter_inappwebview_plugin
 
                 completionHandler(std::move(env), std::move(controller), nullptr);
                 return S_OK;
-              }).Get()));
+              }).Get());
           }
+        }
+        if (failedAndLog(controllerHr)) {
+          // 同步失败时 WebView2 不会再触发回调，必须主动结束 Dart 的等待。
+          completionHandler(nullptr, nullptr, nullptr);
         }
         return S_OK;
       };
