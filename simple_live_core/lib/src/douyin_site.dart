@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/convert_helper.dart';
+import 'package:simple_live_core/src/common/core_error.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
 import 'package:simple_live_core/src/scripts/douyin_sign.dart';
 
@@ -30,7 +31,16 @@ class DouyinSite implements LiveSite {
       "ttwid=1%7CB1qls3GdnZhUov9o2NxOMxxYS2ff6OSvEWbv0ytbES4%7C1680522049%7C280d802d6d478e3e78d0c807f7c487e7ffec0ae4e5fdd6a0fe74c3c6af149511";
 
   /// 用户设置的 cookie
-  String cookie = "";
+  String _cookie = "";
+  String? _visitorCookie;
+  Future<String>? _visitorCookieRequest;
+
+  String get cookie => _cookie;
+  set cookie(String value) {
+    if (_cookie == value) return;
+    _cookie = value;
+    _visitorCookie = null;
+  }
 
   void _logDebug(String msg) {
     // 同时使用 print 和 CoreLog 确保日志输出
@@ -45,22 +55,50 @@ class DouyinSite implements LiveSite {
   };
 
   Future<Map<String, dynamic>> getRequestHeaders() async {
-    try {
-      // 如果用户已设置 cookie，直接使用用户的 cookie
-      if (cookie.isNotEmpty) {
-        headers["cookie"] = cookie;
-        return headers;
-      }
+    final configured = cookie.isNotEmpty ? cookie : kDefaultCookie;
+    return {
+      ...headers,
+      'cookie': _visitorCookie == null
+          ? configured
+          : _mergeCookies(configured, [_visitorCookie!]),
+    };
+  }
 
-      // 使用默认的 ttwid cookie（只需要 ttwid 即可获取所有画质）
-      headers["cookie"] = kDefaultCookie;
-      return headers;
-    } catch (e) {
-      CoreLog.error(e);
-      if (!(headers["cookie"]?.toString().isNotEmpty ?? false)) {
-        headers["cookie"] = kDefaultCookie;
+  String _mergeCookies(String original, Iterable<String> updates) {
+    final values = <String, String>{};
+    for (final value in [...original.split(';'), ...updates]) {
+      final entry = value.split(';').first.trim();
+      final separator = entry.indexOf('=');
+      if (separator > 0) values[entry.substring(0, separator)] = entry;
+    }
+    return values.values.join('; ');
+  }
+
+  Future<String> _fetchVisitorCookie() async {
+    // 首页 HEAD 即使返回 404，也可能在响应头中发放访客会话。
+    final response = await HttpClient.instance.head(
+      'https://live.douyin.com/',
+      header: {...headers},
+    );
+    final value = (response.headers['set-cookie'] ?? []).firstWhere(
+      (value) => value.trimLeft().startsWith('ttwid='),
+      orElse: () => '',
+    );
+    if (value.isEmpty) throw const FormatException('抖音未返回访客会话');
+    return value.split(';').first.trim();
+  }
+
+  Future<void> _refreshVisitorCookie() async {
+    final configured = cookie;
+    final pending = _visitorCookieRequest ??= _fetchVisitorCookie();
+    try {
+      final value = await pending;
+      // 并发更新关注时共享请求，不覆盖请求期间修改的账号配置。
+      if (cookie == configured) _visitorCookie = value;
+    } finally {
+      if (identical(_visitorCookieRequest, pending)) {
+        _visitorCookieRequest = null;
       }
-      return headers;
     }
   }
 
@@ -259,6 +297,9 @@ class DouyinSite implements LiveSite {
       return await load();
     } catch (e) {
       CoreLog.error(e);
+      if (e is CoreError && const [400, 401, 403, 404].contains(e.statusCode)) {
+        rethrow;
+      }
       await Future.delayed(const Duration(milliseconds: 400));
       return load();
     }
@@ -325,10 +366,16 @@ class DouyinSite implements LiveSite {
     try {
       var result = await _getRoomDetailByWebRidApi(webRid);
       return result;
-    } catch (e) {
+    } catch (e, stackTrace) {
       CoreLog.error(e);
+      try {
+        return await _getRoomDetailByWebRidHtml(webRid);
+      } catch (fallbackError) {
+        // 备用页面失败时保留首个接口错误，便于判断重试条件与真实原因。
+        CoreLog.error(fallbackError);
+        Error.throwWithStackTrace(e, stackTrace);
+      }
     }
-    return await _getRoomDetailByWebRidHtml(webRid);
   }
 
   /// 通过WebRid访问直播间API，从API中获取直播间信息
@@ -440,24 +487,20 @@ class DouyinSite implements LiveSite {
   /// 进入直播间前需要先获取cookie
   /// - [webRid] 直播间RID
   Future<String> _getWebCookie(String webRid) async {
+    final requestHeaders = await getRequestHeaders();
     var headResp = await HttpClient.instance.head(
       "https://live.douyin.com/$webRid",
-      header: headers,
+      header: requestHeaders,
     );
-    var dyCookie = "";
-    headResp.headers["set-cookie"]?.forEach((element) {
-      var cookie = element.split(";")[0];
-      if (cookie.contains("ttwid")) {
-        dyCookie += "$cookie;";
-      }
-      if (cookie.contains("__ac_nonce")) {
-        dyCookie += "$cookie;";
-      }
-      if (cookie.contains("msToken")) {
-        dyCookie += "$cookie;";
-      }
-    });
-    return dyCookie;
+    return _mergeCookies(
+      requestHeaders['cookie'] as String,
+      (headResp.headers['set-cookie'] ?? []).where(
+        (value) =>
+            value.startsWith('ttwid=') ||
+            value.startsWith('__ac_nonce=') ||
+            value.startsWith('msToken='),
+      ),
+    );
   }
 
   /// 通过webRid获取直播间Web信息
@@ -475,18 +518,47 @@ class DouyinSite implements LiveSite {
       },
     );
 
-    var renderData =
-        RegExp(
-          r'\{\\"state\\":\{\\"appStore.*?\]\\n',
-        ).firstMatch(result)?.group(0) ??
-        "";
-    var str = renderData
-        .trim()
-        .replaceAll('\\"', '"')
-        .replaceAll(r"\\", r"\")
-        .replaceAll(']\\n', "");
-    var renderDataJson = json.decode(str);
-    return renderDataJson["state"];
+    // 先解码脚本中的 JSON 字符串，避免手动反转义破坏标题等字段。
+    final chunks = RegExp(
+      r'self\.__(?:next|pace)_f\.push\(\s*\[\s*\d+\s*,\s*("(?:\\.|[^"\\])*")\s*\]\s*\)',
+    ).allMatches(result);
+    for (final chunk in chunks) {
+      try {
+        final payload = json.decode(chunk.group(1)!) as String;
+        final start = RegExp(r'\{\s*"state"\s*:').firstMatch(payload)?.start;
+        if (start == null) continue;
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+        for (var i = start; i < payload.length; i++) {
+          final char = payload[i];
+          if (inString) {
+            if (escaped) {
+              escaped = false;
+            } else if (char == r'\') {
+              escaped = true;
+            } else if (char == '"') {
+              inString = false;
+            }
+          } else if (char == '"') {
+            inString = true;
+          } else if (char == '{') {
+            depth++;
+          } else if (char == '}' && --depth == 0) {
+            final data = json.decode(payload.substring(start, i + 1)) as Map;
+            final state = data['state'];
+            final store = state is Map ? state['roomStore'] : null;
+            final info = store is Map ? store['roomInfo'] : null;
+            if (info is Map && info['room'] is Map) return state as Map;
+            break;
+          }
+        }
+      } on FormatException {
+        // 页面可能包含多个数据块，继续查找有效的房间数据。
+        continue;
+      }
+    }
+    throw CoreError('抖音网页未返回有效直播间数据，可能需要验证或页面结构已变化');
   }
 
   Future<LiveSubCategory?> getRoomGameCategory(String webRid) async {
@@ -531,21 +603,42 @@ class DouyinSite implements LiveSite {
         "browser_name": "Chrome",
         "browser_version": "125.0.0.0",
         "web_rid": webRid,
-        "msToken": "",
       },
     );
     var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
 
-    var result = await HttpClient.instance.getJson(
-      requestUrl,
-      header: requestHeader,
-    );
-
-    if (result is! Map) {
-      throw Exception("抖音接口返回格式异常");
+    Future<Map> load(String url, Map<String, dynamic> requestHeaders) async {
+      final result = await HttpClient.instance.getJson(
+        url,
+        header: requestHeaders,
+      );
+      final data = result is Map ? result['data'] : null;
+      final rooms = data is Map ? data['data'] : null;
+      if (rooms is! List || rooms.isEmpty || rooms.first is! Map) {
+        throw const FormatException('抖音直播间接口未返回有效数据');
+      }
+      return data as Map;
     }
 
-    return result["data"];
+    try {
+      return await load(requestUrl, requestHeader);
+    } catch (error) {
+      if (error is! FormatException &&
+          !(error is CoreError && error.statusCode == 444)) {
+        rethrow;
+      }
+      // 风控拒绝或空响应时更新访客会话，并使用房间接口的另一请求方式。
+      // 只恢复一次；分区和搜索接口仍保留原来的签名请求。
+      try {
+        await _refreshVisitorCookie();
+      } catch (refreshError) {
+        CoreLog.error(refreshError);
+      }
+      return load(uri.toString(), {
+        ...await getRequestHeaders(),
+        'Referer': 'https://live.douyin.com/$webRid',
+      });
+    }
   }
 
   /// 通过roomId获取直播间信息
