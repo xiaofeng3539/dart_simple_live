@@ -214,17 +214,96 @@ void main() {
     expect(visitorRequests, 1);
   });
 
+  test('备用请求被拒绝后使用新会话重新签名，成功后停止请求', () async {
+    var apiRequests = 0;
+    var visitorRequests = 0;
+    String? initialSignature;
+    intercept((request, handler) {
+      if (request.method == 'HEAD' && request.uri.path == '/') {
+        visitorRequests++;
+        handler.resolve(
+          Response(
+            requestOptions: request,
+            headers: Headers.fromMap({
+              'set-cookie': ['ttwid=fresh; Path=/; HttpOnly'],
+            }),
+          ),
+        );
+        return;
+      }
+      if (request.uri.path != '/webcast/room/web/enter/') {
+        reject(request, handler, 444);
+        return;
+      }
+      apiRequests++;
+      if (apiRequests == 1) {
+        initialSignature = request.uri.queryParameters['a_bogus'];
+        reject(request, handler, 444);
+      } else if (apiRequests == 2) {
+        expect(request.uri.queryParameters, isNot(contains('a_bogus')));
+        reject(request, handler, 444);
+      } else {
+        expect(request.headers['cookie'], contains('ttwid=fresh'));
+        expect(request.headers['cookie'], contains('sessionid=account'));
+        expect(
+          request.headers['Referer'],
+          'https://live.douyin.com/141601416352',
+        );
+        expect(request.uri.queryParameters['web_rid'], '141601416352');
+        expect(request.uri.queryParameters['a_bogus'], isNotEmpty);
+        expect(request.uri.queryParameters['a_bogus'], isNot(initialSignature));
+        expect(request.uri.queryParametersAll['msToken'], hasLength(1));
+        handler.resolve(
+          Response(requestOptions: request, data: roomResponse()),
+        );
+      }
+    });
+    final site = DouyinSite()..cookie = 'ttwid=expired; sessionid=account';
+    final detail = await site.getRoomDetailByWebRid('141601416352');
+    expect(detail.status, isTrue);
+    expect(detail.roomId, '141601416352');
+    expect(
+      (detail.danmakuData as DouyinDanmakuArgs).cookie,
+      contains('ttwid=fresh'),
+    );
+    expect(site.cookie, 'ttwid=expired; sessionid=account');
+    expect(apiRequests, 3);
+    expect(visitorRequests, 1);
+  });
+
+  test('备用请求返回 403 时不继续签名重试', () async {
+    var apiRequests = 0;
+    intercept((request, handler) {
+      if (request.method == 'HEAD' && request.uri.path == '/') {
+        handler.resolve(Response(requestOptions: request));
+      } else if (request.uri.path == '/webcast/room/web/enter/') {
+        apiRequests++;
+        reject(request, handler, apiRequests == 1 ? 444 : 403);
+      } else {
+        reject(request, handler, 403);
+      }
+    });
+    await expectLater(
+      DouyinSite().getRoomDetail(roomId: '141601416352'),
+      throwsA(isA<CoreError>().having((error) => error.statusCode, '错误码', 403)),
+    );
+    expect(apiRequests, 2);
+  });
+
   test('持续被拒绝时有限次请求后保留错误', () async {
     var requests = 0;
+    var apiRequests = 0;
     intercept((request, handler) {
       requests++;
+      if (request.uri.path == '/webcast/room/web/enter/') apiRequests++;
       reject(request, handler, 444);
     });
     await expectLater(
       DouyinSite().getRoomDetailByWebRid('610094830592'),
       throwsA(isA<CoreError>().having((error) => error.statusCode, '错误码', 444)),
     );
-    expect(requests, lessThanOrEqualTo(5));
+    expect(requests, lessThanOrEqualTo(6));
+    expect(apiRequests, 3);
   });
 
   test('访客刷新未发放 Cookie 时仍尝试备用请求，不删除用户配置', () async {

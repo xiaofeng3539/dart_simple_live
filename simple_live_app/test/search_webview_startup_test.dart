@@ -67,6 +67,22 @@ void main() {
     expect(controller.webViewError.value, isNotNull);
   });
 
+  test('网页环境失败提示保留原生错误码，区分权限与运行时问题', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (_) async {
+      throw PlatformException(
+        code: '-2147024891',
+        message: 'Cannot create WebViewEnvironment: Access is denied.',
+      );
+    });
+    final controller = AppSearchController();
+    addTearDown(controller.onClose);
+    await expectLater(
+        controller.webViewEnvironment, throwsA(isA<PlatformException>()));
+    expect(controller.webViewError.value, contains('0x80070005'));
+    expect(controller.webViewLoading.value, isFalse);
+  });
+
   test('组件未创建成功时刷新会重新初始化而非重复等待旧环境', () async {
     var creations = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

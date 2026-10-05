@@ -65,7 +65,7 @@ namespace flutter_inappwebview_plugin
           result_->Success(true);
         }
         else {
-          result_->Error("0", "Cannot create WebViewEnvironment: " + getHRMessage(errorCode));
+          result_->Error(std::to_string(errorCode), "Cannot create WebViewEnvironment: " + getHRMessage(errorCode));
           if (map_contains(webViewEnvironments, id)) {
             webViewEnvironments.erase(id);
           }

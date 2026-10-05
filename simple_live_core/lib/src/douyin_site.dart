@@ -627,17 +627,34 @@ class DouyinSite implements LiveSite {
           !(error is CoreError && error.statusCode == 444)) {
         rethrow;
       }
-      // 风控拒绝或空响应时更新访客会话，并使用房间接口的另一请求方式。
-      // 只恢复一次；分区和搜索接口仍保留原来的签名请求。
+      // 空响应或 444 时更新访客会话，先尝试现有备用请求。
       try {
         await _refreshVisitorCookie();
       } catch (refreshError) {
         CoreLog.error(refreshError);
       }
-      return load(uri.toString(), {
+      final refreshedHeaders = {
         ...await getRequestHeaders(),
         'Referer': 'https://live.douyin.com/$webRid',
-      });
+      };
+      try {
+        return await load(uri.toString(), refreshedHeaders);
+      } catch (fallbackError, stackTrace) {
+        if (fallbackError is! FormatException &&
+            !(fallbackError is CoreError && fallbackError.statusCode == 444)) {
+          rethrow;
+        }
+        // 备用请求也被拒绝时，新会话重新签名一次，不复用失败的签名。
+        try {
+          return await load(
+            DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent),
+            refreshedHeaders,
+          );
+        } catch (signedError) {
+          CoreLog.error(signedError);
+          Error.throwWithStackTrace(fallbackError, stackTrace);
+        }
+      }
     }
   }
 

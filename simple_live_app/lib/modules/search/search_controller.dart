@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:get/get.dart';
 import 'package:path/path.dart' as p;
@@ -52,7 +53,12 @@ class AppSearchController extends GetxController {
     } catch (error, stackTrace) {
       Log.e('搜索页 WebView2 环境启动失败：$error', stackTrace);
       if (!isClosed && webViewRevision.value == revision) {
-        failLoading('网页组件启动失败，请点击右上角刷新重试');
+        final code =
+            error is PlatformException ? int.tryParse(error.code) : null;
+        final detail = code == null
+            ? ''
+            : '（错误码 0x${code.toUnsigned(32).toRadixString(16).padLeft(8, '0')}）';
+        failLoading('网页组件启动失败，请点击右上角刷新重试$detail');
       }
       rethrow;
     }
