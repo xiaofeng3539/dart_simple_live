@@ -232,6 +232,14 @@ class FollowService extends GetxService {
         // 只有正在直播时才查详细信息
         var detail = await site.liveSite.getRoomDetail(roomId: item.roomId);
         item.liveStartTime = detail.showTime;
+        final categoryName = detail.categoryName?.trim();
+        if (categoryName != null &&
+            categoryName.isNotEmpty &&
+            categoryName != item.categoryName &&
+            identical(DBService.instance.followBox.get(item.id), item)) {
+          item.categoryName = categoryName;
+          await DBService.instance.addFollow(item);
+        }
       } else {
         item.liveStartTime = null;
       }

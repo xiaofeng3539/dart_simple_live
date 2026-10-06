@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_easyrefresh/easy_refresh.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
@@ -11,7 +14,8 @@ import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
-import 'package:simple_live_app/widgets/page_grid_view.dart';
+import 'package:simple_live_app/widgets/status/app_empty_widget.dart';
+import 'package:simple_live_app/widgets/status/app_error_widget.dart';
 
 class FollowUserPage extends GetView<FollowUserController> {
   const FollowUserPage({Key? key}) : super(key: key);
@@ -148,33 +152,122 @@ class FollowUserPage extends GetView<FollowUserController> {
             ),
           ),
           Expanded(
-            child: PageGridView(
-              crossAxisSpacing: 12,
-              crossAxisCount: count,
-              pageController: controller,
-              firstRefresh: true,
-              showPCRefreshButton: false,
-              itemBuilder: (_, i) {
-                var item = controller.list[i];
-                var site = Sites.allSites[item.siteId]!;
-                return FollowUserItem(
-                  item: item,
-                  onRemove: () {
-                    controller.removeItem(item);
-                  },
-                  onTap: () {
-                    AppNavigator.toLiveRoomDetail(
-                        site: site, roomId: item.roomId);
-                  },
-                  onLongPress: () {
-                    setFollowTagDialog(item);
-                  },
-                );
-              },
-            ),
+            child: _buildFollowList(context, count),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFollowList(BuildContext context, int count) {
+    return Obx(() {
+      // controller.list 已由原有筛选逻辑过滤；按首次出现顺序分组。
+      final groups = <String, List<FollowUser>>{};
+      for (final item in controller.list) {
+        final name = item.categoryName?.trim() ?? '';
+        groups.putIfAbsent(name.isEmpty ? '其他' : name, () => []).add(item);
+      }
+      return Stack(
+        children: [
+          EasyRefresh(
+            header: MaterialHeader(
+              completeDuration: const Duration(milliseconds: 400),
+            ),
+            footer: MaterialFooter(
+              completeDuration: const Duration(milliseconds: 400),
+            ),
+            scrollController: controller.scrollController,
+            controller: controller.easyRefreshController,
+            firstRefresh: true,
+            onLoad: controller.loadData,
+            onRefresh: controller.refreshData,
+            child: CustomScrollView(
+              slivers: [
+                for (final group in groups.entries)
+                  SliverToBoxAdapter(
+                    key: ValueKey(group.key),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          padding: AppStyle.edgeInsetsV8.copyWith(left: 16),
+                          color: Theme.of(context).scaffoldBackgroundColor,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '${group.key} ${group.value.length}人',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        LayoutBuilder(builder: (_, constraints) {
+                          final width =
+                              (constraints.maxWidth - 12 * (count - 1)) / count;
+                          return Wrap(
+                            spacing: 12,
+                            children: [
+                              for (final item in group.value)
+                                SizedBox(
+                                  key: ValueKey(item.id),
+                                  width: width,
+                                  child: _buildFollowItem(item),
+                                ),
+                            ],
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Visibility(
+              visible: (Platform.isWindows || Platform.isLinux || Platform.isMacOS) &&
+                  controller.canLoadMore.value &&
+                  !controller.pageLoadding.value &&
+                  !controller.pageEmpty.value,
+              child: Center(
+                child: TextButton(
+                  onPressed: controller.loadData,
+                  child: const Text('加载更多'),
+                ),
+              ),
+            ),
+          ),
+          Offstage(
+            offstage: !controller.pageEmpty.value,
+            child: AppEmptyWidget(onRefresh: () => controller.refreshData()),
+          ),
+          Offstage(
+            offstage: !controller.pageError.value,
+            child: AppErrorWidget(
+              errorMsg: controller.errorMsg.value,
+              onRefresh: () => controller.refreshData(),
+            ),
+          ),
+        ],
+      );
+    });
+  }
+
+  Widget _buildFollowItem(FollowUser item) {
+    final site = Sites.allSites[item.siteId]!;
+    return FollowUserItem(
+      item: item,
+      onRemove: () {
+        controller.removeItem(item);
+      },
+      onTap: () {
+        AppNavigator.toLiveRoomDetail(site: site, roomId: item.roomId);
+      },
+      onLongPress: () {
+        setFollowTagDialog(item);
+      },
     );
   }
 

@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+      - "!v2.0.0" # 2.0 安装包由维护者手动上传。
 jobs:
   build-mac-ios-android:
     runs-on: macos-latest
