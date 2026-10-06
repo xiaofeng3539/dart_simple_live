@@ -188,6 +188,7 @@ namespace flutter_inappwebview_plugin
 
   void CustomPlatformView::UnregisterMethodCallHandler() const
   {
+    if (event_channel_) event_channel_->SetStreamHandler(nullptr);
     if (method_channel_) {
       method_channel_->SetMethodCallHandler(nullptr);
       if (view && view->channelDelegate) {
@@ -199,8 +200,20 @@ namespace flutter_inappwebview_plugin
   CustomPlatformView::~CustomPlatformView()
   {
     debugLog("dealloc CustomPlatformView");
+    UnregisterMethodCallHandler();
+    // 纹理注销可能晚于平台视图析构，先解除捕获当前平台视图的回调。
+    if (view) {
+      view->onSurfaceSizeChanged(nullptr);
+      view->onCursorChanged(nullptr);
+    }
     event_sink_ = nullptr;
-    texture_registrar_->UnregisterTexture(texture_id_, nullptr);
+    texture_bridge_->Stop();
+    texture_bridge_->SetOnFrameAvailable(nullptr);
+    texture_bridge_->SetOnSurfaceSizeChanged(nullptr);
+    // 引擎异步注销纹理；完成前 GPU 回调仍可能访问 bridge 和纹理描述。
+    auto bridge = std::shared_ptr<TextureBridge>(std::move(texture_bridge_));
+    auto texture = std::shared_ptr<flutter::TextureVariant>(std::move(flutter_texture_));
+    texture_registrar_->UnregisterTexture(texture_id_, [bridge, texture]() {});
   }
 
   void CustomPlatformView::RegisterEventHandlers()

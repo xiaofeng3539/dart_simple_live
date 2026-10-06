@@ -17,6 +17,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_core/simple_live_core.dart';
 
 class FollowService extends GetxService {
   StreamSubscription<dynamic>? subscription;
@@ -225,14 +226,22 @@ class FollowService extends GetxService {
   Future updateLiveStatus(FollowUser item) async {
     try {
       var site = Sites.allSites[item.siteId]!;
-      // 先只查状态
-      var isLiving = await site.liveSite.getLiveStatus(roomId: item.roomId);
+      // 抖音状态接口本身会获取详情，复用该详情中的网页叶子分区。
+      final douyinDetail = site.liveSite is DouyinSite
+          ? await site.liveSite.getRoomDetail(roomId: item.roomId)
+          : null;
+      var isLiving = douyinDetail?.status ??
+          await site.liveSite.getLiveStatus(roomId: item.roomId);
       item.liveStatus.value = isLiving ? 2 : 1;
       if (item.liveStatus.value == 2) {
-        // 只有正在直播时才查详细信息
-        var detail = await site.liveSite.getRoomDetail(roomId: item.roomId);
+        // 复用抖音已有详情；其他平台仍仅在开播时查询详情。
+        var detail = douyinDetail ??
+            await site.liveSite.getRoomDetail(roomId: item.roomId);
         item.liveStartTime = detail.showTime;
-        final categoryName = detail.categoryName?.trim();
+        item.heat = detail.online > 0 ? detail.online : null;
+        final categoryName = (site.liveSite is DouyinSite
+                ? await (site.liveSite as DouyinSite).getFollowCategoryName(detail)
+                : detail.categoryName)?.trim();
         if (categoryName != null &&
             categoryName.isNotEmpty &&
             categoryName != item.categoryName &&
@@ -242,11 +251,13 @@ class FollowService extends GetxService {
         }
       } else {
         item.liveStartTime = null;
+        item.heat = null;
       }
     } catch (e) {
       Log.logPrint(e);
       item.liveStatus.value = 0;
       item.liveStartTime = null;
+      item.heat = null;
     } finally {
       updatedCount++;
       if (updatedCount >= followList.length) {

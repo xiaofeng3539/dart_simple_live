@@ -255,8 +255,9 @@ namespace flutter_inappwebview_plugin
     ).Get()));
 
     failedLog(webView->CallDevToolsProtocolMethod(L"Page.getFrameTree", L"{}", Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
-      [this](HRESULT errorCode, LPCWSTR returnObjectAsJson)
+      [this, lifetime = std::weak_ptr<int>(callbackLifetime_)](HRESULT errorCode, LPCWSTR returnObjectAsJson)
       {
+        if (lifetime.expired()) return S_OK;
         if (succeededOrLog(errorCode)) {
           auto treeJson = nlohmann::json::parse(wide_to_utf8(returnObjectAsJson));
           pageFrameId_ = treeJson["frameTree"]["frame"]["id"].get<std::string>();
@@ -616,8 +617,9 @@ namespace flutter_inappwebview_plugin
     ).Get(), nullptr));
 
     failedLog(webView->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-      [this](ICoreWebView2* sender, ICoreWebView2WebMessageReceivedEventArgs* args)
+      [this, lifetime = std::weak_ptr<int>(callbackLifetime_)](ICoreWebView2* sender, ICoreWebView2WebMessageReceivedEventArgs* args)
       {
+        if (lifetime.expired()) return S_OK;
         if (!channelDelegate) {
           return S_OK;
         }
@@ -636,8 +638,9 @@ namespace flutter_inappwebview_plugin
               std::string handlerArgs = body.at("args").is_string() ? body.at("args").get<std::string>() : "";
 
               auto callback = std::make_unique<WebViewChannelDelegate::CallJsHandlerCallback>();
-              callback->defaultBehaviour = [this, callHandlerID](const std::optional<const flutter::EncodableValue*> response)
+              callback->defaultBehaviour = [this, callHandlerID, lifetime = std::weak_ptr<int>(callbackLifetime_)](const std::optional<const flutter::EncodableValue*> response)
                 {
+                  if (lifetime.expired()) return;
                   std::string json = "null";
                   if (response.has_value() && !response.value()->IsNull()) {
                     json = std::get<std::string>(*(response.value()));
@@ -648,8 +651,9 @@ namespace flutter_inappwebview_plugin
                       delete window." + JAVASCRIPT_BRIDGE_NAME + "[" + std::to_string(callHandlerID) + "]; \
                     }", ContentWorld::page(), nullptr);
                 };
-              callback->error = [this, callHandlerID](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
+              callback->error = [this, callHandlerID, lifetime = std::weak_ptr<int>(callbackLifetime_)](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
                 {
+                  if (lifetime.expired()) return;
                   auto errorMessage = error_code + ", " + error_message;
                   debugLog(errorMessage);
 
@@ -665,7 +669,7 @@ namespace flutter_inappwebview_plugin
 
         return S_OK;
       }
-    ).Get(), nullptr));
+    ).Get(), &webMessageToken_));
 
     wil::com_ptr<ICoreWebView2DevToolsProtocolEventReceiver> consoleMessageReceiver;
     if (succeededOrLog(webView->GetDevToolsProtocolEventReceiver(L"Runtime.consoleAPICalled", &consoleMessageReceiver))) {
@@ -714,14 +718,17 @@ namespace flutter_inappwebview_plugin
 
     failedLog(webView->add_NewWindowRequested(
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
-        [this](ICoreWebView2* sender, ICoreWebView2NewWindowRequestedEventArgs* args)
+        [this, lifetime = std::weak_ptr<int>(callbackLifetime_)](ICoreWebView2* sender, ICoreWebView2NewWindowRequestedEventArgs* args)
         {
+          if (lifetime.expired()) return S_OK;
           wil::com_ptr<ICoreWebView2Deferral> deferral;
           if (channelDelegate && plugin && plugin->inAppWebViewManager && succeededOrLog(args->GetDeferral(&deferral))) {
             plugin->inAppWebViewManager->windowAutoincrementId++;
             int64_t windowId = plugin->inAppWebViewManager->windowAutoincrementId;
-            auto newWindowRequestedArgs = std::make_unique<NewWindowRequestedArgs>(args, deferral);
+            wil::com_ptr<ICoreWebView2NewWindowRequestedEventArgs> retainedArgs = args;
+            auto newWindowRequestedArgs = std::make_unique<NewWindowRequestedArgs>(retainedArgs, deferral);
             plugin->inAppWebViewManager->windowWebViews.insert({ windowId, std::move(newWindowRequestedArgs) });
+            pendingWindowIds_.insert(windowId);
 
             wil::unique_cotaskmem_string uri = nullptr;
             std::optional<std::string> url = SUCCEEDED(args->get_Uri(&uri)) ? wide_to_utf8(uri.get()) : std::optional<std::string>{};
@@ -746,21 +753,23 @@ namespace flutter_inappwebview_plugin
               std::move(windowFeatures));
 
             auto callback = std::make_unique<WebViewChannelDelegate::CreateWindowCallback>();
-            auto defaultBehaviour = [this, windowId, urlRequest, deferral, args](const std::optional<const bool> handledByClient)
+            auto defaultBehaviour = [this, windowId, urlRequest, deferral, retainedArgs, lifetime = std::weak_ptr<int>(callbackLifetime_)](const std::optional<const bool> handledByClient)
               {
+                if (lifetime.expired()) return;
                 if (plugin && plugin->inAppWebViewManager && map_contains(plugin->inAppWebViewManager->windowWebViews, windowId)) {
                   plugin->inAppWebViewManager->windowWebViews.erase(windowId);
                 }
-                loadUrl(urlRequest);
-                failedLog(args->put_Handled(TRUE));
+                pendingWindowIds_.erase(windowId);
+                failedLog(retainedArgs->put_Handled(TRUE));
                 failedLog(deferral->Complete());
+                loadUrl(urlRequest);
               };
-            callback->nonNullSuccess = [this, deferral, args](const bool handledByClient)
+            callback->nonNullSuccess = [](const bool handledByClient)
               {
                 return !handledByClient;
               };
             callback->defaultBehaviour = defaultBehaviour;
-            callback->error = [this, defaultBehaviour](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
+            callback->error = [defaultBehaviour](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
               {
                 debugLog(error_code + ", " + error_message);
                 defaultBehaviour(std::nullopt);
@@ -769,7 +778,7 @@ namespace flutter_inappwebview_plugin
           }
           return S_OK;
         }
-      ).Get(), nullptr));
+      ).Get(), &newWindowToken_));
 
     failedLog(webView->add_WindowCloseRequested(Callback<ICoreWebView2WindowCloseRequestedEventHandler>(
       [this](ICoreWebView2* sender, IUnknown* args)
@@ -1231,8 +1240,9 @@ namespace flutter_inappwebview_plugin
         }
 
         auto hr = webView->CallDevToolsProtocolMethod(L"Runtime.evaluate", utf8_to_wide(parameters.dump()).c_str(), Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
-          [this, completionHandler](HRESULT errorCode, LPCWSTR returnObjectAsJson)
+        [this, completionHandler, lifetime = std::weak_ptr<int>(callbackLifetime_)](HRESULT errorCode, LPCWSTR returnObjectAsJson)
           {
+            if (lifetime.expired()) return S_OK;
             nlohmann::json result;
             if (succeededOrLog(errorCode)) {
               nlohmann::json json = nlohmann::json::parse(wide_to_utf8(returnObjectAsJson));
@@ -1872,17 +1882,34 @@ namespace flutter_inappwebview_plugin
   InAppWebView::~InAppWebView()
   {
     debugLog("dealloc InAppWebView");
+    callbackLifetime_.reset();
+    if (channelDelegate) channelDelegate->UnregisterMethodCallHandler();
+    if (plugin && plugin->inAppWebViewManager) {
+      auto& requests = plugin->inAppWebViewManager->windowWebViews;
+      for (const auto windowId : pendingWindowIds_) {
+        auto request = requests.find(windowId);
+        if (request != requests.end()) {
+          failedLog(request->second->args->put_Handled(TRUE));
+          failedLog(request->second->deferral->Complete());
+          requests.erase(request);
+        }
+      }
+    }
+    pendingWindowIds_.clear();
     userContentController = nullptr;
     if (webView) {
+      failedLog(webView->remove_WebMessageReceived(webMessageToken_));
+      failedLog(webView->remove_NewWindowRequested(newWindowToken_));
       failedLog(webView->Stop());
     }
     HWND parentWindow = nullptr;
     if (webViewCompositionController && webViewController && succeededOrLog(webViewController->get_ParentWindow(&parentWindow))) {
       // if it's an InAppWebView (so webViewCompositionController will be not a nullptr!),
       // then destroy the Window created with it
+      failedLog(webViewController->Close());
       DestroyWindow(parentWindow);
     }
-    if (webViewController) {
+    else if (webViewController) {
       failedLog(webViewController->Close());
     }
     navigationActions_.clear();

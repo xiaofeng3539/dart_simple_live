@@ -25,10 +25,11 @@ namespace flutter_inappwebview_plugin
     if (succeededOrLog(webView_->webView->GetDevToolsProtocolEventReceiver(L"Runtime.executionContextCreated", &executionContextCreated))) {
       auto hr = executionContextCreated->add_DevToolsProtocolEventReceived(
         Callback<ICoreWebView2DevToolsProtocolEventReceivedEventHandler>(
-          [this](
+          [this, lifetime = std::weak_ptr<int>(callbackLifetime_)](
             ICoreWebView2* sender,
             ICoreWebView2DevToolsProtocolEventReceivedEventArgs* args) -> HRESULT
           {
+            if (lifetime.expired()) return S_OK;
             wil::unique_cotaskmem_string json;
             if (succeededOrLog(args->get_ParameterObjectAsJson(&json))) {
               nlohmann::json context = nlohmann::json::parse(wide_to_utf8(json.get()))["context"];
@@ -50,9 +51,10 @@ namespace flutter_inappwebview_plugin
 
             return S_OK;
           })
-        .Get(), nullptr);
+        .Get(), &executionContextToken_);
 
       failedLog(hr);
+      if (SUCCEEDED(hr)) executionContextCreated_ = executionContextCreated;
     }
 
     /*
@@ -314,8 +316,9 @@ namespace flutter_inappwebview_plugin
         {"worldName", worldName}
       };
       auto hr = webView_->webView->CallDevToolsProtocolMethod(L"Page.createIsolatedWorld", utf8_to_wide(parameters.dump()).c_str(), Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
-        [this, completionHandler, worldName](HRESULT errorCode, LPCWSTR returnObjectAsJson)
+        [this, completionHandler, worldName, lifetime = std::weak_ptr<int>(callbackLifetime_)](HRESULT errorCode, LPCWSTR returnObjectAsJson)
         {
+          if (lifetime.expired()) return S_OK;
           if (succeededOrLog(errorCode) && completionHandler) {
             auto id = nlohmann::json::parse(wide_to_utf8(returnObjectAsJson))["executionContextId"].get<int>();
             addPluginScriptsIfRequired(std::make_shared<ContentWorld>(worldName));
@@ -424,6 +427,10 @@ namespace flutter_inappwebview_plugin
   UserContentController::~UserContentController()
   {
     debugLog("dealloc UserContentController");
+    callbackLifetime_.reset();
+    if (executionContextCreated_) {
+      failedLog(executionContextCreated_->remove_DevToolsProtocolEventReceived(executionContextToken_));
+    }
     removeAllUserOnlyScripts();
     removeAllPluginScripts();
     contentWorlds_.clear();

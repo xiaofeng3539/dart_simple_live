@@ -49,6 +49,9 @@ class FollowUser {
   /// 开播时间戳
   String? liveStartTime;
 
+  /// 现有房间详情中的热度，仅在内存中用于关注分类内部排序。
+  int? heat;
+
   factory FollowUser.fromJson(Map<String, dynamic> json) => FollowUser(
         id: json['id'],
         roomId: json['roomId'],

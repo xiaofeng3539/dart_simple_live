@@ -25,6 +25,12 @@ class AppSearchController extends GetxController {
   InAppWebViewController? webViewController;
   Future<WebViewEnvironment?>? _webViewEnvironment;
   Timer? _loadTimer;
+  bool _closing = false;
+  bool _openingRoom = false;
+
+  bool _isCurrent(InAppWebViewController? view, int revision) =>
+      !_closing && !isClosed && webViewRevision.value == revision &&
+      identical(webViewController, view);
 
   Future<WebViewEnvironment?> get webViewEnvironment =>
       _webViewEnvironment ??= _createWebViewEnvironment();
@@ -65,6 +71,8 @@ class AppSearchController extends GetxController {
   }
 
   void selectSite(Site site) {
+    if (_closing || isClosed) return;
+    webViewRevision.value++;
     webViewVisible.value = true;
     startLoading();
     roomId.value = null;
@@ -73,7 +81,7 @@ class AppSearchController extends GetxController {
   }
 
   void updateUrl(Uri? uri) {
-    if (!webViewVisible.value) return;
+    if (_closing || isClosed || !webViewVisible.value) return;
     final site = selectedSite.value;
     final detectedRoomId = site == null || uri == null
         ? null
@@ -89,6 +97,9 @@ class AppSearchController extends GetxController {
   }
 
   void reset() {
+    webViewRevision.value++;
+    webViewController?.removeJavaScriptHandler(handlerName: 'simpleLiveDouyinRoom');
+    onRoomDetected = null;
     _loadTimer?.cancel();
     webViewLoading.value = false;
     webViewError.value = null;
@@ -100,12 +111,16 @@ class AppSearchController extends GetxController {
   }
 
   Future<void> goBackInWebView() async {
-    if (await webViewController?.canGoBack() ?? false) {
-      await webViewController?.goBack();
+    final view = webViewController;
+    final revision = webViewRevision.value;
+    if (!_isCurrent(view, revision) || view == null) return;
+    if (await view.canGoBack() && _isCurrent(view, revision)) {
+      await view.goBack();
     }
   }
 
   Future<void> reloadWebView() async {
+    if (_closing || isClosed) return;
     final recreate = Platform.isWindows &&
         (webViewController == null || webViewError.value != null);
     if (recreate) {
@@ -129,6 +144,7 @@ class AppSearchController extends GetxController {
   }
 
   void startLoading() {
+    if (_closing || isClosed) return;
     webViewLoading.value = true;
     webViewError.value = null;
     _loadTimer?.cancel();
@@ -141,17 +157,25 @@ class AppSearchController extends GetxController {
   }
 
   void finishLoading() {
+    if (_closing || isClosed) return;
     _loadTimer?.cancel();
     webViewLoading.value = false;
   }
 
   void failLoading(String message) {
+    if (_closing || isClosed) return;
     finishLoading();
     webViewError.value = message;
   }
 
   @override
   void onClose() {
+    if (_closing) return;
+    _closing = true;
+    webViewRevision.value++;
+    webViewController?.removeJavaScriptHandler(handlerName: 'simpleLiveDouyinRoom');
+    webViewController = null;
+    onRoomDetected = null;
     _loadTimer?.cancel();
     _disposeWebViewEnvironment();
     super.onClose();
@@ -159,29 +183,38 @@ class AppSearchController extends GetxController {
 
   Future<bool> openPopup(CreateWindowAction action) async {
     final url = action.request.url;
-    if (url == null || webViewController == null) return false;
+    if (_closing || isClosed || url == null || webViewController == null) return false;
     updateUrl(url);
-    await webViewController!.loadUrl(urlRequest: action.request);
+    // Windows 插件在返回 false 后执行默认导航，不能在两端重复 loadUrl。
+    if (!Platform.isWindows) {
+      await webViewController!.loadUrl(urlRequest: action.request);
+    }
     return false;
   }
 
   Future<void> openRoom({String? detectedRoomId}) async {
+    if (_closing || isClosed || _openingRoom) return;
     final site = selectedSite.value;
     final id = detectedRoomId ?? roomId.value;
     if (site == null || id == null) return;
     if (site.id == Constant.kDouyin) {
       final webView = webViewController;
-      await webView?.pause();
-      webViewVisible.value = false;
-      await WidgetsBinding.instance.endOfFrame;
+      final revision = webViewRevision.value;
+      _openingRoom = true;
       try {
+        await webView?.pause();
+        if (!_isCurrent(webView, revision)) return;
+        webViewVisible.value = false;
+        await WidgetsBinding.instance.endOfFrame;
+        if (!_isCurrent(webView, revision)) return;
         await AppNavigator.toLiveRoomDetail(site: site, roomId: id);
       } finally {
-        if (!isClosed) {
+        if (_isCurrent(webView, revision)) {
           webViewVisible.value = true;
           await WidgetsBinding.instance.endOfFrame;
-          await webView?.resume();
+          if (_isCurrent(webView, revision)) await webView?.resume();
         }
+        _openingRoom = false;
       }
       return;
     }

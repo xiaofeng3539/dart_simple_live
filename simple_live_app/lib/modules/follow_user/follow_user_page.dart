@@ -5,11 +5,13 @@ import 'package:flutter_easyrefresh/easy_refresh.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/modules/follow_user/follow_user_controller.dart';
+import 'package:simple_live_app/modules/follow_user/follow_category_name.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
@@ -164,8 +166,8 @@ class FollowUserPage extends GetView<FollowUserController> {
       // controller.list 已由原有筛选逻辑过滤；按首次出现顺序分组。
       final groups = <String, List<FollowUser>>{};
       for (final item in controller.list) {
-        final name = item.categoryName?.trim() ?? '';
-        groups.putIfAbsent(name.isEmpty ? '其他' : name, () => []).add(item);
+        final name = normalizeFollowCategory(item.categoryName);
+        groups.putIfAbsent(name, () => []).add(item);
       }
       return Stack(
         children: [
@@ -183,7 +185,7 @@ class FollowUserPage extends GetView<FollowUserController> {
             onRefresh: controller.refreshData,
             child: CustomScrollView(
               slivers: [
-                for (final group in groups.entries)
+                for (final group in controller.sortCategoryGroups(groups))
                   SliverToBoxAdapter(
                     key: ValueKey(group.key),
                     child: Column(
@@ -207,7 +209,9 @@ class FollowUserPage extends GetView<FollowUserController> {
                           return Wrap(
                             spacing: 12,
                             children: [
-                              for (final item in group.value)
+                              for (final item in controller.sortCategoryMembers(
+                                  group.value,
+                                  AppSettingsController.instance.siteSort.toList()))
                                 SizedBox(
                                   key: ValueKey(item.id),
                                   width: width,

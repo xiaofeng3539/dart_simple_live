@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'model/room_category_name.dart';
 import 'dart:math';
 
 import 'package:simple_live_core/simple_live_core.dart';
@@ -446,7 +447,7 @@ class HuyaSite implements LiveSite {
 
     return LiveRoomDetail(
       categoryId: tLiveInfo["iGameId"]?.toString(),
-      categoryName: tLiveInfo["sGameFullName"]?.toString(),
+      categoryName: firstCategoryName([tLiveInfo['sGameFullName'], tLiveInfo['sGameName']]),
       cover: tLiveInfo["sScreenshot"].toString(),
       online: tLiveInfo["lTotalCount"],
       roomId: tLiveInfo["lProfileRoom"].toString(),

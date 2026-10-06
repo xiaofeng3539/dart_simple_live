@@ -2,6 +2,7 @@
 #define FLUTTER_INAPPWEBVIEW_PLUGIN_IN_APP_WEBVIEW_H_
 
 #include <functional>
+#include <set>
 #include <WebView2.h>
 #include <wil/com.h>
 #include <windows.ui.composition.desktop.h>
@@ -185,6 +186,11 @@ namespace flutter_inappwebview_plugin
     static bool isSslError(const COREWEBVIEW2_WEB_ERROR_STATUS& webErrorStatus);
   private:
     // custom_platform_view
+    // 跨 Dart 的异步回调不得延长原生窗口寿命，也不得访问已释放窗口。
+    std::shared_ptr<int> callbackLifetime_ = std::make_shared<int>(0);
+    std::set<int64_t> pendingWindowIds_;
+    EventRegistrationToken webMessageToken_ = {};
+    EventRegistrationToken newWindowToken_ = {};
     winrt::com_ptr<ABI::Windows::UI::Composition::IVisual> surface_;
     SurfaceSizeChangedCallback surfaceSizeChangedCallback_;
     CursorChangedCallback cursorChangedCallback_;

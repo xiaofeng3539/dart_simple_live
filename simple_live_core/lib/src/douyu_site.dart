@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'model/room_category_name.dart';
 import 'common/core_log.dart';
 import 'dart:math';
 
@@ -272,6 +273,11 @@ class DouyuSite implements LiveSite {
       isRecord: roomInfo["videoLoop"] == 1,
       showTime: showTime,
       categoryId: roomInfo["cate_id"]?.toString(),
+      categoryName: firstCategoryName([
+        roomInfo['cate2_name'], h5RoomInfo['data']?['cate2_name'],
+        roomInfo['cate_name'], h5RoomInfo['data']?['cate_name'],
+        roomInfo['cate1_name'], h5RoomInfo['data']?['cate1_name'],
+      ]),
     );
   }
 

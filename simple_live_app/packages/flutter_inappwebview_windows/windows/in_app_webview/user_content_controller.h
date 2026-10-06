@@ -53,6 +53,9 @@ namespace flutter_inappwebview_plugin
     void createContentWorld(const std::shared_ptr<ContentWorld> contentWorld, const std::function<void(int)> completionHandler);
   private:
     InAppWebView* webView_;
+    std::shared_ptr<int> callbackLifetime_ = std::make_shared<int>(0);
+    wil::com_ptr<ICoreWebView2DevToolsProtocolEventReceiver> executionContextCreated_;
+    EventRegistrationToken executionContextToken_ = {};
 
     // used to track Content World names -> Execution Context ID
     std::map<std::string, int> contentWorlds_;

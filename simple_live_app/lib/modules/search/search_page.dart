@@ -108,7 +108,8 @@ class SearchPage extends GetView<AppSearchController> {
                         webViewController.addJavaScriptHandler(
                           handlerName: 'simpleLiveDouyinRoom',
                           callback: (args) {
-                            if (controller.selectedSite.value?.id == site.id &&
+                            if (isCurrentView() &&
+                                identical(controller.webViewController, webViewController) &&
                                 args.isNotEmpty &&
                                 args.first is String) {
                               final uri = Uri.tryParse(args.first as String);
@@ -141,7 +142,10 @@ class SearchPage extends GetView<AppSearchController> {
                     onUpdateVisitedHistory: (_, uri, __) {
                       if (isCurrentView()) controller.updateUrl(uri);
                     },
-                    onCreateWindow: (_, action) => controller.openPopup(action),
+                    onCreateWindow: (view, action) => isCurrentView() &&
+                            identical(controller.webViewController, view)
+                        ? controller.openPopup(action)
+                        : Future.value(false),
                   ),
                 ),
                 _webViewStatus(),
@@ -203,9 +207,13 @@ class SearchPage extends GetView<AppSearchController> {
       });
 
   void _showRoomPrompt(String roomId) async {
+    final revision = controller.webViewRevision.value;
     await Future<void>.delayed(Duration.zero);
     final site = controller.selectedSite.value;
-    if (controller.isClosed || site == null) return;
+    if (controller.isClosed || site == null ||
+        controller.webViewRevision.value != revision) {
+      return;
+    }
     final open = await Get.dialog<bool>(
       Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -245,6 +253,7 @@ class SearchPage extends GetView<AppSearchController> {
     );
     if (open == true &&
         !controller.isClosed &&
+        controller.webViewRevision.value == revision &&
         controller.selectedSite.value == site) {
       controller.openRoom(detectedRoomId: roomId);
     }

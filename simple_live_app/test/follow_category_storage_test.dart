@@ -10,6 +10,7 @@ import 'package:simple_live_core/simple_live_core.dart';
 
 class _Site extends HuyaSite {
   String? category = ' 英雄联盟 ';
+  int online = 16000;
   int statusRequests = 0;
   int detailRequests = 0;
   @override
@@ -21,7 +22,7 @@ class _Site extends HuyaSite {
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
     detailRequests++;
     return LiveRoomDetail(roomId: roomId, title: '', cover: '', userName: '',
-        userAvatar: '', online: 0, status: true, url: '', categoryName: category);
+        userAvatar: '', online: online, status: true, url: '', categoryName: category);
   }
 }
 
@@ -93,14 +94,18 @@ void main() {
     service.followList.add(item);
     await service.updateLiveStatus(item);
     expect(item.categoryName, '英雄联盟');
+    expect(item.heat, 16000);
     expect(site.statusRequests, 1);
     expect(site.detailRequests, 1);
     await db.followBox.close();
     db.followBox = await Hive.openBox<FollowUser>('FollowUser');
     final restored = db.followBox.get(item.id)!;
     expect(restored.categoryName, '英雄联盟');
+    expect(restored.heat, isNull);
     site.category = null;
+    site.online = 0;
     await service.updateLiveStatus(restored);
+    expect(restored.heat, isNull);
     expect(restored.categoryName, '英雄联盟');
     await db.deleteFollow(item.id);
     site.category = '无畏契约';

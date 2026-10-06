@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'model/room_category_name.dart';
 
 import 'package:crypto/crypto.dart';
 import 'package:simple_live_core/src/common/convert_helper.dart';
@@ -301,7 +302,11 @@ class BiliBiliSite implements LiveSite {
       ),
       showTime: liveStartTime, // 将 liveStartTime 赋值给 showTime 字段
       categoryId: roomInfo["room_info"]["area_id"]?.toString(),
-      categoryName: roomInfo["room_info"]["area_name"]?.toString(),
+      categoryName: firstCategoryName([
+        roomInfo['room_info']['second_area_name'],
+        roomInfo['room_info']['area_name'],
+        roomInfo['room_info']['parent_area_name'],
+      ]),
     );
   }
 

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'model/room_category_name.dart';
 import 'dart:math';
 
 import 'package:simple_live_core/simple_live_core.dart';
@@ -34,6 +35,8 @@ class DouyinSite implements LiveSite {
   String _cookie = "";
   String? _visitorCookie;
   Future<String>? _visitorCookieRequest;
+  final Map<String, String> _webPartitionNames = {};
+  Future<List<LiveCategory>>? _followCategoryRequest;
 
   String get cookie => _cookie;
   set cookie(String value) {
@@ -109,10 +112,46 @@ class DouyinSite implements LiveSite {
       queryParameters: {},
       header: await getRequestHeaders(),
     );
+    void collect(dynamic node) {
+      if (node is! Map) return;
+      final partition = node['partition'];
+      final id = partition is Map ? douyinWebPartitionId(partition) : null;
+      final title = partition is Map ? firstCategoryName([partition['title']]) : null;
+      if (id != null && title != null) _webPartitionNames[id] = title;
+      final children = node['sub_partition'];
+      if (children is List) {
+        for (final child in children) {
+          collect(child);
+        }
+      }
+    }
+    for (final node in _parseCategoryData(result)) {
+      collect(node);
+    }
     return parseCategories(result);
   }
 
-  static List<LiveCategory> parseCategories(String page) {
+  /// 只供关注页使用官方网页分区；不再次获取直播间详情。
+  Future<String?> getFollowCategoryName(LiveRoomDetail detail) async {
+    if (detail.leafCategoryName != null && detail.leafCategoryName != '游戏') {
+      return detail.leafCategoryName;
+    }
+    final fallback = detail.webParentCategoryName ?? '其他';
+    final id = detail.categoryId;
+    if (id == null) return fallback;
+    if (_webPartitionNames.isEmpty) {
+      try {
+        await (_followCategoryRequest ??= getCategores());
+      } catch (error) {
+        // 分类目录失败仅影响分类回退，不改变直播状态或播放结果。
+        CoreLog.error(error);
+      }
+    }
+    final name = _webPartitionNames[id];
+    return name == null || name == '游戏' ? fallback : name;
+  }
+
+  static List<dynamic> _parseCategoryData(String page) {
     const marker = r'\"categoryData\":';
     final markerIndex = page.indexOf(marker);
     if (markerIndex < 0) throw const FormatException('未找到抖音分类数据');
@@ -129,8 +168,11 @@ class DouyinSite implements LiveSite {
     }
     if (end < 0) throw const FormatException('抖音分类数据不完整');
     final encoded = page.substring(start, end + 1);
-    final renderDataJson =
-        json.decode(json.decode('"$encoded"') as String) as List<dynamic>;
+    return json.decode(json.decode('"$encoded"') as String) as List<dynamic>;
+  }
+
+  static List<LiveCategory> parseCategories(String page) {
+    final renderDataJson = _parseCategoryData(page);
     List<LiveCategory> categories = [];
 
     for (var item in renderDataJson) {
@@ -321,6 +363,7 @@ class DouyinSite implements LiveSite {
     var userUniqueId = generateRandomNumber(12).toString();
 
     var room = roomData["data"]["room"];
+    final webPartition = douyinWebPartition(room, roomData['data']);
     var owner = room["owner"];
 
     var status = asT<int?>(room["status"]) ?? 0;
@@ -338,6 +381,10 @@ class DouyinSite implements LiveSite {
 
     return LiveRoomDetail(
       roomId: webRid,
+      categoryName: douyinCategoryName(room),
+      categoryId: douyinWebPartitionId(webPartition),
+      leafCategoryName: firstCategoryName([webPartition?['title']]),
+      webParentCategoryName: douyinWebParentCategoryName(room, roomData['data']),
       title: room["title"].toString(),
       cover: roomStatus ? room["cover"]["url_list"][0].toString() : "",
       userName: owner["nickname"].toString(),
@@ -386,6 +433,7 @@ class DouyinSite implements LiveSite {
     var data = await _getRoomDataByApi(webRid);
 
     var roomData = data["data"][0];
+    final webPartition = douyinWebPartition(roomData, data);
     var userData = data["user"];
     var roomId = roomData["id_str"].toString();
 
@@ -402,6 +450,10 @@ class DouyinSite implements LiveSite {
     var headers = await getRequestHeaders();
     return LiveRoomDetail(
       roomId: webRid,
+      categoryName: douyinCategoryName(roomData, data),
+      categoryId: douyinWebPartitionId(webPartition),
+      leafCategoryName: firstCategoryName([webPartition?['title']]),
+      webParentCategoryName: douyinWebParentCategoryName(roomData, data),
       title: roomData["title"].toString(),
       cover: roomStatus ? roomData["cover"]["url_list"][0].toString() : "",
       userName: roomStatus
@@ -438,6 +490,7 @@ class DouyinSite implements LiveSite {
         generateRandomNumber(12).toString();
 
     var room = roomData["roomStore"]["roomInfo"]["room"];
+    final webPartition = douyinWebPartition(room, roomData['roomStore']['roomInfo']);
     var owner = room["owner"];
     var anchor = roomData["roomStore"]["roomInfo"]["anchor"];
     var roomStatus = (asT<int?>(room["status"]) ?? 0) == 2;
@@ -447,6 +500,10 @@ class DouyinSite implements LiveSite {
 
     return LiveRoomDetail(
       roomId: webRid,
+      categoryName: douyinCategoryName(room, roomData['roomStore']['roomInfo']),
+      categoryId: douyinWebPartitionId(webPartition),
+      leafCategoryName: firstCategoryName([webPartition?['title']]),
+      webParentCategoryName: douyinWebParentCategoryName(room, roomData['roomStore']['roomInfo']),
       title: room["title"].toString(),
       cover: roomStatus ? room["cover"]["url_list"][0].toString() : "",
       userName: roomStatus

@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
+import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/modules/follow_user/follow_user_controller.dart';
 import 'package:simple_live_app/modules/follow_user/follow_user_page.dart';
@@ -18,6 +19,12 @@ class _Service extends FollowService {
   void onInit() {}
   @override
   Future<void> loadData({bool updateStatus = true}) async {}
+}
+
+class _Settings extends AppSettingsController {
+  @override
+  // ignore: must_call_super
+  void onInit() {}
 }
 
 class _Controller extends FollowUserController {
@@ -39,6 +46,8 @@ FollowUser user(String name, String? category, int status) {
 void main() {
   late _Controller controller;
   setUp(() {
+    Get.put<AppSettingsController>(_Settings())
+        .siteSort.assignAll(['douyin', 'huya', 'bilibili', 'douyu']);
     final service = Get.put<FollowService>(_Service());
     final users = [user('联盟一', '英雄联盟', 2), user('契约一', '无畏契约', 2),
       user('联盟二', ' 英雄联盟 ', 1), user('未知', null, 1)];
@@ -90,6 +99,53 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(seconds: 1));
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('分类只按已开播数降序，其他即使开播最多也固定最后', (tester) async {
+    final users = [
+      user('其他一', null, 2), user('其他二', null, 2), user('其他三', null, 2),
+      user('甲直播', '游戏甲', 2),
+      ...List.generate(5, (i) => user('甲离线$i', '游戏甲', 1)),
+      user('乙一', '游戏乙', 2), user('乙二', '游戏乙', 2),
+      user('零直播', '游戏丙', 1),
+    ];
+    Get.find<FollowService>().followList.assignAll(users);
+    controller.list.assignAll(users);
+    await show(tester, const Size(2200, 1400));
+    double top(String label) => tester.getTopLeft(find.text(label)).dy;
+    expect(top('游戏乙 2人'), lessThan(top('游戏甲 6人')));
+    expect(top('游戏甲 6人'), lessThan(top('游戏丙 1人')));
+    expect(top('游戏丙 1人'), lessThan(top('其他 3人')));
+    final cards = tester.widgetList<FollowUserItem>(find.byType(FollowUserItem));
+    expect(cards.where((card) => card.item.categoryName == '游戏甲').map((card) => card.item.userName),
+        ['甲直播', '甲离线0', '甲离线1', '甲离线2', '甲离线3', '甲离线4']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('开播状态变化自动重排，同人数保留上一轮显示顺序且空刷新不清掉顺序', (tester) async {
+    final a = user('甲一', '游戏甲', 2);
+    final b = user('乙一', '游戏乙', 2);
+    final b2 = user('乙二', '游戏乙', 2);
+    final users = [a, b, b2];
+    Get.find<FollowService>().followList.assignAll(users);
+    controller.list.assignAll(users);
+    await show(tester, const Size(2200, 1200));
+    double top(String label) => tester.getTopLeft(find.text(label)).dy;
+    expect(top('游戏乙 2人'), lessThan(top('游戏甲 1人')));
+    b2.liveStatus.value = 1;
+    await tester.pump();
+    expect(top('游戏乙 2人'), lessThan(top('游戏甲 1人')));
+    controller.list.clear();
+    await tester.pump();
+    controller.list.assignAll(users);
+    await tester.pump();
+    expect(top('游戏乙 2人'), lessThan(top('游戏甲 1人')));
+    b.liveStatus.value = 1;
+    await tester.pump();
+    expect(top('游戏甲 1人'), lessThan(top('游戏乙 2人')));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 2));
   });
 
   testWidgets('Windows字体下分类长列表可连续滚轮到底，底部不回跳', (tester) async {
