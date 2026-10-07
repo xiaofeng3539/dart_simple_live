@@ -22,46 +22,159 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late List<String> calls;
   var maximized = false;
+  var nativeFullscreen = false;
 
   setUp(() {
     calls = [];
     maximized = false;
+    nativeFullscreen = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call.method);
+      if (call.method == 'isFullScreen') return nativeFullscreen;
+      if (call.method == 'setFullScreen') {
+        nativeFullscreen = (call.arguments as Map)['isFullScreen'] as bool;
+      }
       if (call.method == 'isMaximized') return maximized;
-      if (call.method == 'unmaximize') {
-        Future<void>.delayed(const Duration(milliseconds: 20), () {
-          maximized = false;
-        });
-      }
-      if (call.method == 'setFullScreen' &&
-          call.arguments['isFullScreen'] == true &&
-          maximized) {
-        throw PlatformException(code: 'window-still-maximized');
-      }
+      if (call.method == 'unmaximize') maximized = false;
+      if (call.method == 'maximize') maximized = true;
       return null;
     });
   });
 
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
-  test('Windows 原生全屏完成前保持原页面布局', () async {
+  test('切换查询异常后释放锁，后续双击仍能切换', () async {
+    var fail = true;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'isFullScreen') {
+        if (fail) throw PlatformException(code: 'query-failed');
+        return nativeFullscreen;
+      }
+      if (call.method == 'setFullScreen') {
+        nativeFullscreen = (call.arguments as Map)['isFullScreen'] as bool;
+      }
+      return null;
+    });
+    final controller = _TestPlayer();
+    await expectLater(
+        controller.onDoubleTap(), throwsA(isA<PlatformException>()));
+    fail = false;
+    await controller.onDoubleTap();
+    expect(nativeFullscreen, isTrue);
+    await controller.onDoubleTap();
+    expect(nativeFullscreen, isFalse);
+  });
+
+  test('查询尚未完成时连续双击不会交叉发出全屏请求', () async {
+    final queried = Completer<void>();
+    var requests = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'isFullScreen') {
+        await queried.future;
+        return nativeFullscreen;
+      }
+      if (call.method == 'setFullScreen') {
+        requests++;
+        nativeFullscreen = (call.arguments as Map)['isFullScreen'] as bool;
+      }
+      return null;
+    });
+    final controller = _TestPlayer();
+    final first = controller.onDoubleTap();
+    await controller.onDoubleTap();
+    await controller.onDoubleTap();
+    queried.complete();
+    await first;
+    expect(requests, 1);
+    expect(controller.fullScreenState.value, nativeFullscreen);
+    await controller.onDoubleTap();
+    expect(requests, 2);
+    expect(nativeFullscreen, isFalse);
+  });
+
+  for (final native in [false, true]) {
+    test('双击以实际窗口状态切换，纠正过期的 $native 全屏状态', () async {
+      nativeFullscreen = native;
+      final controller = _TestPlayer();
+      controller.fullScreenState.value = !native;
+      await controller.onDoubleTap();
+      expect(nativeFullscreen, !native);
+      expect(controller.fullScreenState.value, !native);
+    });
+  }
+
+  test('Windows 调整窗口尺寸前准备全屏布局', () async {
     final fullscreenComplete = Completer<void>();
     messenger.setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'isMaximized') return false;
-      if (call.method == 'setFullScreen') await fullscreenComplete.future;
+      if (call.method == 'isFullScreen') return nativeFullscreen;
+      if (call.method == 'setFullScreen') {
+        await fullscreenComplete.future;
+        nativeFullscreen = (call.arguments as Map)['isFullScreen'] as bool;
+      }
       return null;
     });
     final controller = _TestPlayer();
 
     final entering = controller.enterFullScreen();
     await Future<void>.delayed(Duration.zero);
-    expect(controller.fullScreenState.value, isFalse);
+    expect(controller.fullScreenState.value, isTrue);
 
     fullscreenComplete.complete();
     await entering;
     expect(controller.fullScreenState.value, isTrue);
   });
+
+  test('Windows 调整窗口尺寸前准备原窗口布局', () async {
+    final fullscreenComplete = Completer<void>();
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'isFullScreen') return nativeFullscreen;
+      if (call.method == 'setFullScreen') {
+        await fullscreenComplete.future;
+        nativeFullscreen = (call.arguments as Map)['isFullScreen'] as bool;
+      }
+      return null;
+    });
+    final controller = _TestPlayer();
+    nativeFullscreen = true;
+    controller.fullScreenState.value = true;
+
+    final exiting = controller.exitFull();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.fullScreenState.value, isFalse);
+
+    fullscreenComplete.complete();
+    await exiting;
+    expect(controller.fullScreenState.value, isFalse);
+  });
+
+  for (final entering in [true, false]) {
+    test('Windows ${entering ? "进入" : "退出"}全屏失败时恢复布局并允许重试', () async {
+      var fail = true;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'isMaximized') return false;
+        if (call.method == 'isFullScreen') return nativeFullscreen;
+        if (call.method == 'setFullScreen' && fail) {
+          throw PlatformException(code: 'fullscreen-failed');
+        }
+        if (call.method == 'setFullScreen') {
+          nativeFullscreen = (call.arguments as Map)['isFullScreen'] as bool;
+        }
+        return null;
+      });
+      final controller = _TestPlayer();
+      controller.fullScreenState.value = !entering;
+      nativeFullscreen = !entering;
+      Future<void> toggle() =>
+          entering ? controller.enterFullScreen() : controller.exitFull();
+
+      await expectLater(toggle(), throwsA(isA<PlatformException>()));
+      expect(controller.fullScreenState.value, !entering);
+      fail = false;
+      await toggle();
+      expect(controller.fullScreenState.value, entering);
+    });
+  }
 
   testWidgets('普通全屏画面不拖动窗口，小窗仍能拖动', (tester) async {
     const content = SizedBox(key: ValueKey('player'));
@@ -76,31 +189,31 @@ void main() {
     expect(find.byType(DragToMoveArea), findsOneWidget);
   });
 
-  test('已最大化窗口进入全屏时先还原，退出时恢复最大化', () async {
+  test('最大化窗口直接往返全屏，不经过普通窗口或重复最大化', () async {
     maximized = true;
     final controller = _TestPlayer();
 
     await controller.enterFullScreen();
     expect(controller.fullScreenState.value, isTrue);
-    expect(calls.first, 'isMaximized');
-    expect(calls, contains('unmaximize'));
-    expect(calls.last, 'setFullScreen');
+    expect(calls, ['isFullScreen', 'setFullScreen', 'isFullScreen']);
+    expect(maximized, isTrue);
 
     calls.clear();
     await controller.exitFull();
     expect(controller.fullScreenState.value, isFalse);
-    expect(calls, ['setFullScreen', 'setTitleBarStyle', 'maximize']);
+    expect(calls, ['isFullScreen', 'setFullScreen', 'isFullScreen']);
+    expect(maximized, isTrue);
   });
 
   test('普通窗口全屏退出后保持普通窗口', () async {
     final controller = _TestPlayer();
 
     await controller.enterFullScreen();
-    expect(calls, ['isMaximized', 'setFullScreen']);
+    expect(calls, ['isFullScreen', 'setFullScreen', 'isFullScreen']);
 
     calls.clear();
     await controller.exitFull();
-    expect(calls, ['setFullScreen', 'setTitleBarStyle']);
+    expect(calls, ['isFullScreen', 'setFullScreen', 'isFullScreen']);
   });
 
   for (final wasMaximized in [false, true]) {
@@ -115,11 +228,8 @@ void main() {
       controller.onDoubleTap();
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(controller.fullScreenState.value, isFalse);
-      expect(calls, [
-        'setFullScreen',
-        'setTitleBarStyle',
-        if (wasMaximized) 'maximize',
-      ]);
+      expect(calls, ['isFullScreen', 'setFullScreen', 'isFullScreen']);
+      expect(maximized, wasMaximized);
     });
   }
 

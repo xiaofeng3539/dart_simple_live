@@ -118,6 +118,19 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == WM_NCCALCSIZE && wparam && ::IsZoomed(hwnd)) {
+    const LONG_PTR style = ::GetWindowLongPtr(hwnd, GWL_STYLE);
+    auto* size = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    // 最大化进入全屏时，插件去掉缩放边框，但未去掉标题栏客户区。
+    if ((style & (WS_THICKFRAME | WS_MAXIMIZEBOX)) == 0 &&
+        ::GetMonitorInfo(::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                         &monitor) &&
+        ::EqualRect(&size->rgrc[0], &monitor.rcMonitor)) {
+      return 0;
+    }
+  }
   if (message == WM_CLOSE) {
     if (window_channel_) {
       window_channel_->InvokeMethod("onCloseRequest", nullptr);

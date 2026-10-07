@@ -90,7 +90,17 @@ class LiveRoomPage extends StatelessWidget {
             ),
           );
         }
-        if (controller.fullScreenState.value) {
+        final fullScreen = controller.fullScreenState.value;
+        if (Platform.isWindows) {
+          return PopScope(
+            canPop: !fullScreen,
+            onPopInvokedWithResult: (didPop, result) {
+              if (!didPop && fullScreen) controller.exitFull();
+            },
+            child: buildPageUI(fullScreen: fullScreen),
+          );
+        }
+        if (fullScreen) {
           return PopScope(
             canPop: false,
             onPopInvokedWithResult: (e, r) {
@@ -115,21 +125,27 @@ class LiveRoomPage extends StatelessWidget {
     );
   }
 
-  Widget buildPageUI() {
+  Widget buildPageUI({bool fullScreen = false}) {
     return Builder(
       builder: (context) {
         // 同方向缩放只重新布局，不重新构造整个播放页。
         final orientation = MediaQuery.orientationOf(context);
         return Scaffold(
-          appBar: AppBar(
-            title: Obx(
-              () => Text(controller.detail.value?.title ?? "直播间"),
-            ),
-            actions: buildAppbarActions(context),
-          ),
-          body: orientation == Orientation.portrait
-              ? buildPhoneUI(context)
-              : buildTabletUI(context),
+          appBar: fullScreen
+              ? null
+              : AppBar(
+                  title: Obx(
+                    () => Text(controller.detail.value?.title ?? "直播间"),
+                  ),
+                  actions: buildAppbarActions(context),
+                ),
+          body: Platform.isWindows
+              ? buildTabletUI(context,
+                  fullScreen: fullScreen,
+                  portrait: orientation == Orientation.portrait)
+              : orientation == Orientation.portrait
+                  ? buildPhoneUI(context)
+                  : buildTabletUI(context),
         );
       },
     );
@@ -149,30 +165,42 @@ class LiveRoomPage extends StatelessWidget {
     );
   }
 
-  Widget buildTabletUI(BuildContext context) {
+  Widget buildTabletUI(BuildContext context,
+      {bool fullScreen = false, bool portrait = false}) {
+    final phoneLayout = portrait && !fullScreen;
     return Column(
       children: [
-        Expanded(
-          child: Row(
-            children: [
-              Expanded(
-                child: buildMediaPlayer(),
-              ),
-              SizedBox(
-                width: 300,
-                child: RepaintBoundary(
-                  child: Column(
-                    children: [
-                      buildUserProfile(context),
-                      buildMessageArea(),
-                    ],
+        // 保持视频的父子路径不变，切换时仅改变容器约束。
+        Flexible(
+          flex: phoneLayout ? 0 : 1,
+          fit: FlexFit.tight,
+          child: SizedBox(
+            height: phoneLayout ? MediaQuery.sizeOf(context).width * 9 / 16 : null,
+            child: Row(
+              children: [
+                Expanded(child: buildMediaPlayer()),
+                if (!fullScreen && !portrait)
+                  SizedBox(
+                    width: 300,
+                    child: RepaintBoundary(
+                      child: Column(
+                        children: [
+                          buildUserProfile(context),
+                          buildMessageArea(),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-        Container(
+        if (phoneLayout) ...[
+          buildUserProfile(context),
+          buildMessageArea(),
+          buildBottomActions(context),
+        ],
+        if (!fullScreen && !portrait) Container(
           decoration: BoxDecoration(
             color: Theme.of(context).cardColor,
             border: Border(

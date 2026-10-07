@@ -251,7 +251,6 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
 }
 mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
-  bool _wasMaximizedBeforeFullScreen = false;
   bool _changingFullScreen = false;
   bool _playerClosing = false;
 
@@ -302,6 +301,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   /// 进入全屏
   Future<void> enterFullScreen() async {
+    if (Platform.isWindows) {
+      await _setWindowsFullScreen(true);
+      return;
+    }
     if (_playerClosing || _changingFullScreen || fullScreenState.value) return;
     _changingFullScreen = true;
     try {
@@ -314,27 +317,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
           await setLandscapeOrientation();
         }
       } else {
-        if (Platform.isWindows) {
-          _wasMaximizedBeforeFullScreen = await windowManager.isMaximized();
-          if (_wasMaximizedBeforeFullScreen) {
-            await windowManager.unmaximize();
-            var stillMaximized = true;
-            for (var attempt = 0; attempt < 100; attempt++) {
-              stillMaximized = await windowManager.isMaximized();
-              if (!stillMaximized) break;
-              await Future<void>.delayed(const Duration(milliseconds: 20));
-            }
-            if (stillMaximized) {
-              return;
-            }
-          }
-        }
-        if (_playerClosing) {
-          if (Platform.isWindows && _wasMaximizedBeforeFullScreen) {
-            await windowManager.maximize();
-          }
-          return;
-        }
+        if (_playerClosing) return;
         await windowManager.setFullScreen(true);
       }
       if (_playerClosing) {
@@ -345,9 +328,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
         } else {
           await windowManager.setFullScreen(false);
           await windowManager.setTitleBarStyle(TitleBarStyle.normal);
-          if (Platform.isWindows && _wasMaximizedBeforeFullScreen) {
-            await windowManager.maximize();
-          }
         }
         return;
       }
@@ -364,6 +344,10 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       await exitSmallWindow();
       return;
     }
+    if (Platform.isWindows) {
+      await _setWindowsFullScreen(false);
+      return;
+    }
     if (_changingFullScreen || !fullScreenState.value) return;
     _changingFullScreen = true;
     try {
@@ -374,10 +358,6 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
       } else {
         await windowManager.setFullScreen(false);
         await windowManager.setTitleBarStyle(TitleBarStyle.normal);
-        if (Platform.isWindows && _wasMaximizedBeforeFullScreen) {
-          await windowManager.maximize();
-          _wasMaximizedBeforeFullScreen = false;
-        }
       }
       fullScreenState.value = false;
     } finally {
@@ -385,6 +365,31 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
     }
 
     //danmakuController?.clear();
+  }
+
+  /// Windows 查询、切换和状态同步共用一个锁，避免连续双击交叉执行。
+  Future<void> _setWindowsFullScreen(bool? requested) async {
+    if ((_playerClosing && requested != false) ||
+        _changingFullScreen ||
+        smallWindowState.value) {
+      return;
+    }
+    _changingFullScreen = true;
+    try {
+      final current = await windowManager.isFullScreen();
+      if (_playerClosing && requested != false) return;
+      final target = requested ?? !current;
+      // 在 resize 前准备布局；即使内部状态过期，也按实际窗口决定方向。
+      fullScreenState.value = target;
+      if (current != target) await windowManager.setFullScreen(target);
+      if (_playerClosing && target) await windowManager.setFullScreen(false);
+    } finally {
+      try {
+        fullScreenState.value = await windowManager.isFullScreen();
+      } finally {
+        _changingFullScreen = false;
+      }
+    }
   }
 
   Size? _lastWindowSize;
@@ -609,14 +614,18 @@ mixin PlayerGestureControlMixin
   }
 
   /// 双击全屏/退出全屏
-  void onDoubleTap() {
+  Future<void> onDoubleTap() async {
     if (lockControlsState.value) {
       return;
     }
+    if (Platform.isWindows && !smallWindowState.value) {
+      await _setWindowsFullScreen(null);
+      return;
+    }
     if (fullScreenState.value) {
-      exitFull();
+      await exitFull();
     } else {
-      enterFullScreen();
+      await enterFullScreen();
     }
   }
 

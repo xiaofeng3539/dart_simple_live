@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -73,6 +74,21 @@ class _Room extends LiveRoomController {
   int qualitySheets = 0;
   int lineSheets = 0;
   int danmakuSheets = 0;
+  bool useNativeToggle = false;
+  @override
+  Future<void> onDoubleTap() async {
+    if (useNativeToggle) {
+      await super.onDoubleTap();
+      return;
+    }
+    if (lockControlsState.value) return;
+    if (fullScreenState.value) {
+      await exitFull();
+    } else {
+      await enterFullScreen();
+    }
+  }
+
   @override
   Future<void> exitFull() async {
     exits++;
@@ -92,6 +108,7 @@ class _Room extends LiveRoomController {
   Future<void> enterFullScreen() async {
     enters++;
   }
+
   @override
   void showFollowUserSheet() => followSheets++;
   @override
@@ -105,6 +122,47 @@ class _Room extends LiveRoomController {
 }
 
 void main() {
+  for (final size in [const Size(480, 720), const Size(1920, 1080)]) {
+    testWidgets('$size 视频中心连续双击 100 次并切换布局始终响应', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var nativeFullscreen = false;
+      var requests = 0;
+      const channel = MethodChannel('window_manager');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'isFullScreen') return nativeFullscreen;
+        if (call.method == 'setFullScreen') {
+          nativeFullscreen = (call.arguments as Map)['isFullScreen'] as bool;
+          requests++;
+        }
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final room = _Room()..useNativeToggle = true;
+      await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+              body: Builder(
+        builder: (context) => playerControls(_VideoState(context), room),
+      ))));
+      for (var i = 0; i < 100; i++) {
+        final point = tester.getCenter(find.byType(Scaffold));
+        await tester.tapAt(point, kind: PointerDeviceKind.mouse);
+        await tester.pump(const Duration(milliseconds: 80));
+        await tester.tapAt(point, kind: PointerDeviceKind.mouse);
+        tester.view.physicalSize = i.isEven ? const Size(1920, 1080) : size;
+        await tester.pump(const Duration(milliseconds: 350));
+        expect(requests, i + 1, reason: '第 ${i + 1} 次双击');
+        expect(nativeFullscreen, i.isEven);
+        expect(room.fullScreenState.value, nativeFullscreen);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      room.hideControlsTimer?.cancel();
+    });
+  }
   final buttons = <String, Finder Function()>{
     '关注列表': () => find.byIcon(Remix.play_list_2_line),
     '设置': () => find.byIcon(Icons.more_horiz),
@@ -127,7 +185,8 @@ void main() {
         theme: ThemeData(splashFactory: NoSplash.splashFactory),
         navigatorObservers: [FlutterSmartDialog.observer],
         builder: FlutterSmartDialog.init(),
-        home: Scaffold(body: Builder(
+        home: Scaffold(
+            body: Builder(
           builder: (context) => buildFullControls(_VideoState(context), room),
         )),
       ));
@@ -254,13 +313,13 @@ void main() {
           home: Scaffold(
               body: RawGestureDetector(
                   gestures: {
-            FourthButtonTapGestureRecognizer:
-                GestureRecognizerFactoryWithHandlers<
-                    FourthButtonTapGestureRecognizer>(
-              FourthButtonTapGestureRecognizer.new,
-              (recognizer) => recognizer.onTapDown = (_) {},
-            ),
-          },
+                FourthButtonTapGestureRecognizer:
+                    GestureRecognizerFactoryWithHandlers<
+                        FourthButtonTapGestureRecognizer>(
+                  FourthButtonTapGestureRecognizer.new,
+                  (recognizer) => recognizer.onTapDown = (_) {},
+                ),
+              },
                   child: Builder(
                     builder: (context) => full
                         ? buildFullControls(_VideoState(context), room)
@@ -302,7 +361,8 @@ void main() {
     room.currentLineInfo.value = '线路1';
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData(splashFactory: NoSplash.splashFactory),
-      home: Scaffold(body: Builder(
+      home: Scaffold(
+          body: Builder(
         builder: (context) => buildFullControls(_VideoState(context), room),
       )),
     ));
@@ -333,7 +393,8 @@ void main() {
     room.showControlsState.value = true;
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData(splashFactory: NoSplash.splashFactory),
-      home: Scaffold(body: Builder(
+      home: Scaffold(
+          body: Builder(
         builder: (context) => playerControls(_VideoState(context), room),
       )),
     ));
