@@ -13,6 +13,7 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
+import 'package:simple_live_app/modules/live_room/quick_live_room_sort.dart';
 import 'package:simple_live_app/routes/route_path.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/desktop_refresh_button.dart';
@@ -765,43 +766,47 @@ class LiveRoomPage extends StatelessWidget {
 
   Widget buildFollowList() {
     return Obx(
-      () => Stack(
-        children: [
-          RefreshIndicator(
-            onRefresh: FollowService.instance.loadData,
-            child: ListView.builder(
-              itemCount: FollowService.instance.liveList.length,
-              itemBuilder: (_, i) {
-                var item = FollowService.instance.liveList[i];
-                return Obx(
-                  () => FollowUserItem(
-                    item: item,
-                    playing: controller.rxSite.value.id == item.siteId &&
-                        controller.rxRoomId.value == item.roomId,
-                    onTap: () {
-                      controller.resetRoom(
-                        Sites.allSites[item.siteId]!,
-                        item.roomId,
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
-          ),
-          if (Platform.isLinux || Platform.isWindows || Platform.isMacOS)
-            Positioned(
-              right: 12,
-              bottom: 12,
-              child: Obx(
-                () => DesktopRefreshButton(
-                  refreshing: FollowService.instance.updating.value,
-                  onPressed: FollowService.instance.loadData,
-                ),
+      () {
+        final items = sortQuickLiveRooms(FollowService.instance.liveList.toList(),
+            AppSettingsController.instance.siteSort.toList());
+        return Stack(
+          children: [
+            RefreshIndicator(
+              onRefresh: FollowService.instance.loadData,
+              child: ListView.builder(
+                itemCount: items.length,
+                itemBuilder: (_, i) {
+                  var item = items[i];
+                  return Obx(
+                    () => FollowUserItem(
+                      item: item,
+                      playing: controller.rxSite.value.id == item.siteId &&
+                          controller.rxRoomId.value == item.roomId,
+                      onTap: () {
+                        controller.resetRoom(
+                          Sites.allSites[item.siteId]!,
+                          item.roomId,
+                        );
+                      },
+                    ),
+                  );
+                },
               ),
             ),
-        ],
-      ),
+            if (Platform.isLinux || Platform.isWindows || Platform.isMacOS)
+              Positioned(
+                right: 12,
+                bottom: 12,
+                child: Obx(
+                  () => DesktopRefreshButton(
+                    refreshing: FollowService.instance.updating.value,
+                    onPressed: FollowService.instance.loadData,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
