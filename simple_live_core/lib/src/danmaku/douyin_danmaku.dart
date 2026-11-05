@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'emoticon_parser.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -144,6 +145,9 @@ class DouyinDanmaku implements LiveDanmaku {
     for (var msg in payloadPackage.messagesList) {
       if (msg.method == 'WebcastChatMessage') {
         unPackWebcastChatMessage(msg.payload);
+      } else if (msg.method == 'WebcastEmojiChatMessage') {
+        final emoji = EmoticonParser.douyinEmoji(msg.payload);
+        if (emoji != null) onMessage?.call(emoji);
       } else if (msg.method == 'WebcastRoomUserSeqMessage') {
         unPackWebcastRoomUserSeqMessage(msg.payload);
       }
@@ -161,6 +165,7 @@ class DouyinDanmaku implements LiveDanmaku {
         //     ? LiveMessageColor.white
         //     : LiveMessageColor.numberToColor(color),
         message: chatMessage.content,
+        parts: EmoticonParser.douyin(chatMessage),
         userName: chatMessage.user.nickName,
       ),
     );

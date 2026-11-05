@@ -86,6 +86,8 @@ class DouyuDanmaku implements LiveDanmaku {
           type: LiveMessageType.chat,
           userName: jsonData["nn"].toString(),
           message: jsonData["txt"].toString(),
+            emoticonKey: (int.tryParse('${jsonData["gag"]}') ?? 0) > 0
+                ? '[gag:${jsonData["gag"]}]' : null,
           color: getColor(col),
         );
 

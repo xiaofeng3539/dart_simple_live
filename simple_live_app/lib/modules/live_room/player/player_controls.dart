@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:canvas_danmaku/canvas_danmaku.dart';
+import 'package:simple_live_app/widgets/danmaku/canvas_danmaku.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
@@ -22,11 +22,100 @@ import 'package:simple_live_app/widgets/superchat_card.dart';
 import 'dart:async';
 import 'package:simple_live_core/simple_live_core.dart';
 
+/// 播放缓冲提示。
+///
+/// 打开直播间时不显示任何加载符号：白色转圈会直接盖在画面上，
+/// 而首帧通常在几百毫秒内到达，弹出来只是闪一下。
+/// 只有持续缓冲才淡入一行浅色文字，恢复后立即消失。
+class PlayerBufferingHint extends StatefulWidget {
+  const PlayerBufferingHint({
+    super.key,
+    required this.buffering,
+    required this.visible,
+    this.delay = const Duration(milliseconds: 1200),
+  });
+
+  /// 播放器是否处于缓冲状态
+  final bool buffering;
+
+  /// 外部可见条件，例如房间已下播时不再提示
+  final bool visible;
+
+  /// 持续缓冲多久后才提示
+  final Duration delay;
+
+  @override
+  State<PlayerBufferingHint> createState() => _PlayerBufferingHintState();
+}
+
+class _PlayerBufferingHintState extends State<PlayerBufferingHint> {
+  Timer? _timer;
+  bool _show = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(covariant PlayerBufferingHint oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.buffering != widget.buffering ||
+        oldWidget.visible != widget.visible) {
+      // 这里的赋值不能 setState：didUpdateWidget 处在构建流程内，随后必然重建。
+      _sync();
+    }
+  }
+
+  void _sync() {
+    final active = widget.visible && widget.buffering;
+    if (!active) {
+      _timer?.cancel();
+      _timer = null;
+      _show = false;
+      return;
+    }
+    if (_show || _timer != null) return;
+    _timer = Timer(widget.delay, () {
+      _timer = null;
+      if (!mounted) return;
+      if (!widget.visible || !widget.buffering) return;
+      setState(() => _show = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_show) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withAlpha(90),
+          borderRadius: const BorderRadius.all(Radius.circular(6)),
+        ),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Text(
+            "缓冲中",
+            style: TextStyle(fontSize: 12, color: Colors.white, height: 1.2),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 Widget playerControls(
   VideoState videoState,
   LiveRoomController controller,
-) {
-  return Obx(() {
+) {  return Obx(() {
     final controls = controller.fullScreenState.value
         ? buildFullControls(videoState, controller)
         : buildControls(
@@ -136,13 +225,13 @@ Widget buildFullControls(
 
         Center(
           child: // 中间
-              StreamBuilder(
+              StreamBuilder<bool>(
             stream: videoState.widget.controller.player.stream.buffering,
             initialData: videoState.widget.controller.player.state.buffering,
-            builder: (_, s) => Visibility(
-              visible: s.data ?? false,
-              child: const Center(
-                child: CircularProgressIndicator(),
+            builder: (_, s) => Obx(
+              () => PlayerBufferingHint(
+                buffering: s.data ?? false,
+                visible: !controller.roomOffline.value,
               ),
             ),
           ),
@@ -528,13 +617,13 @@ Widget buildControls(
 
       // 中间
       Center(
-        child: StreamBuilder(
+        child: StreamBuilder<bool>(
           stream: videoState.widget.controller.player.stream.buffering,
           initialData: videoState.widget.controller.player.state.buffering,
-          builder: (_, s) => Visibility(
-            visible: s.data ?? false,
-            child: const Center(
-              child: CircularProgressIndicator(),
+          builder: (_, s) => Obx(
+            () => PlayerBufferingHint(
+              buffering: s.data ?? false,
+              visible: !controller.roomOffline.value,
             ),
           ),
         ),

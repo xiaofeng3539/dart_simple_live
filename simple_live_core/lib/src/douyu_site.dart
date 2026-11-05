@@ -213,22 +213,57 @@ class DouyuSite implements LiveSite {
     return LiveCategoryResult(hasMore: hasMore, items: items);
   }
 
+  final Map<String, Future<String>> _encPrefetch = {};
+  final Map<String, Future<Map>> _h5Prefetch = {};
+
+  /// 取流加密串和 h5 房间信息都只依赖 roomId，进房时先和房间信息一起发出去。
   @override
-  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
-    Map roomInfo = await _getRoomInfo(roomId);
+  void prefetchRoom(String roomId) {
+    if (!_encPrefetch.containsKey(roomId)) {
+      if (_encPrefetch.length >= 8) {
+        _encPrefetch.remove(_encPrefetch.keys.first);
+      }
+      final request = _fetchHomeH5Enc(roomId);
+      _encPrefetch[roomId] = request;
+      // 预热结果没人消费时，失败不能变成未捕获异常。
+      request.catchError((Object _) => '');
+    }
+    if (!_h5Prefetch.containsKey(roomId)) {
+      if (_h5Prefetch.length >= 8) {
+        _h5Prefetch.remove(_h5Prefetch.keys.first);
+      }
+      final request = _fetchH5Room(roomId);
+      _h5Prefetch[roomId] = request;
+      request.catchError((Object _) => <String, dynamic>{});
+    }
+  }
 
-    Map h5RoomInfo = await HttpClient.instance.getJson(
-      "https://www.douyu.com/swf_api/h5room/$roomId",
-      queryParameters: {},
-      header: {
-        'referer': 'https://www.douyu.com/$roomId',
-        'user-agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43',
-      },
-    );
-    String? showTime = h5RoomInfo["data"]?["show_time"]?.toString();
+  Future<String> _takeHomeH5Enc(String roomId) async {
+    final prefetched = _encPrefetch.remove(roomId);
+    if (prefetched != null) {
+      try {
+        return await prefetched;
+      } catch (_) {
+        // 预热失败不影响主流程，下面重新请求。
+      }
+    }
+    return _fetchHomeH5Enc(roomId);
+  }
 
-    var jsEncResult = await HttpClient.instance.getText(
+  Future<Map> _takeH5Room(String roomId) async {
+    final prefetched = _h5Prefetch.remove(roomId);
+    if (prefetched != null) {
+      try {
+        return await prefetched;
+      } catch (_) {
+        // 预热失败不影响主流程，下面重新请求。
+      }
+    }
+    return _fetchH5Room(roomId);
+  }
+
+  Future<String> _fetchHomeH5Enc(String roomId) {
+    return HttpClient.instance.getText(
       "https://www.douyu.com/swf_api/homeH5Enc?rids=$roomId",
       queryParameters: {},
       header: {
@@ -237,6 +272,55 @@ class DouyuSite implements LiveSite {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43",
       },
     );
+  }
+
+  Future<Map> _fetchH5Room(String roomId) async {
+    final result = await HttpClient.instance.getJson(
+      "https://www.douyu.com/swf_api/h5room/$roomId",
+      queryParameters: {},
+      header: {
+        'referer': 'https://www.douyu.com/$roomId',
+        'user-agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.43',
+      },
+    );
+    return result as Map;
+  }
+
+  @override
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
+    Map roomInfo = await _getRoomInfo(roomId);
+    final status = int.tryParse(roomInfo['show_status']?.toString() ?? '');
+    if (status == null) throw StateError('斗鱼房间未返回直播状态');
+    final replay = roomInfo['videoLoop']?.toString() == '1';
+    if (status != 1 && !replay) {
+      // No H5/signature requests after the primary API confirms offline.
+      return LiveRoomDetail(
+        roomId: roomInfo['room_id']?.toString() ?? roomId,
+        title: roomInfo['room_name']?.toString() ?? '',
+        cover: roomInfo['room_pic']?.toString() ?? '',
+        userName: roomInfo['owner_name']?.toString() ?? '',
+        userAvatar: roomInfo['owner_avatar']?.toString() ?? '',
+        online: 0,
+        status: false,
+        url: 'https://www.douyu.com/$roomId',
+        categoryId: roomInfo['cate_id']?.toString(),
+        categoryName: firstCategoryName([
+          roomInfo['cate2_name'],
+          roomInfo['cate_name'],
+          roomInfo['cate1_name'],
+        ]),
+      );
+    }
+
+    // 开播时间与取流加密串互不依赖，并发发出，少等一次往返。
+    final h5RoomRequest = _takeH5Room(roomId);
+    final jsEncRequest = _takeHomeH5Enc(roomId);
+    // 若 h5 请求先抛错，加密串请求的失败不应变成未捕获异常。
+    jsEncRequest.catchError((Object _) => '');
+    Map h5RoomInfo = await h5RoomRequest;
+    String? showTime = h5RoomInfo["data"]?["show_time"]?.toString();
+    var jsEncResult = await jsEncRequest;
     var crptext = json.decode(jsEncResult)["data"]["room$roomId"].toString();
 
     if (showTime != null && showTime.isNotEmpty) {

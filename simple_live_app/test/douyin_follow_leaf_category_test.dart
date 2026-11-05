@@ -38,6 +38,29 @@ String _page() {
 }
 
 void main() {
+  test('分类目录首次失败不永久缓存空结果，后续缺分类刷新可恢复三级游戏', () async {
+    final original = HttpClient.instance.dio;
+    final dio = Dio();
+    HttpClient.instance.dio = dio;
+    var requests = 0;
+    dio.interceptors.add(InterceptorsWrapper(onRequest: (o, h) {
+      requests++;
+      h.resolve(Response(requestOptions: o, statusCode: 200,
+          data: requests == 1 ? '无分类目录' : _page()));
+    }));
+    try {
+      final site = DouyinSite();
+      final detail = LiveRoomDetail(roomId: '1', title: '', cover: '', userName: '',
+          userAvatar: '', online: 100, status: true, url: '', categoryId: '1010014,1');
+      expect(await site.getFollowCategoryName(detail), '其他');
+      expect(await site.getFollowCategoryName(detail), '英雄联盟');
+      expect(await site.getFollowCategoryName(detail), '英雄联盟');
+      expect(requests, 2);
+    } finally {
+      dio.close();
+      HttpClient.instance.dio = original;
+    }
+  });
   test('网页路径逐级到最深处，浅层路径和普通候选字段不能覆盖三级', () {
     final room = {'game_name': '竞技游戏', 'leafCategory': '错误的软件候选',
       'partition_road_map': {'partition': {'title': '游戏'},

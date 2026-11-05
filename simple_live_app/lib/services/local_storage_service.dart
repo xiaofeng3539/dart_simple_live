@@ -20,6 +20,9 @@ class LocalStorageService extends GetxService {
   /// 首页排序
   static const String kHomeSort = "HomeSort";
 
+  /// 关注页默认状态：0 全部、1 直播中、2 未开播（不保存临时筛选）。
+  static const String kFollowDefaultFilter = "FollowDefaultFilter";
+
   /// 显示模式
   /// * [0] 跟随系统
   /// * [1] 浅色模式

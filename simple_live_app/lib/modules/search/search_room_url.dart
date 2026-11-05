@@ -17,14 +17,24 @@ class SearchRoomUrl {
     final segments = uri.pathSegments.where((part) => part.isNotEmpty).toList();
     switch (siteId) {
       case Constant.kBiliBili:
-        if (uri.host != 'live.bilibili.com' || segments.length != 1) {
+        String? id;
+        if (uri.host == 'live.bilibili.com') {
+          if (segments.length == 1) {
+            id = segments.first;
+          }
+          if (segments.length == 2 && segments.first == 'h5') {
+            id = segments.last;
+          }
+        } else if (uri.host == 'm.bilibili.com' &&
+            segments.length == 2 && segments.first == 'live') {
+          id = segments.last;
+        }
+        return id != null && RegExp(r'^\d+$').hasMatch(id) ? id : null;
+      case Constant.kHuya:
+        if (!{'www.huya.com', 'm.huya.com'}.contains(uri.host) ||
+            segments.length != 1) {
           return null;
         }
-        return RegExp(r'^\d+$').hasMatch(segments.first)
-            ? segments.first
-            : null;
-      case Constant.kHuya:
-        if (uri.host != 'www.huya.com' || segments.length != 1) return null;
         if ({
           'search', 'index', 'g', 'all', 'video', 'match',
           'live', 'l', 'hot', 'home', 'category', 'zhubo', 'topic',
@@ -33,7 +43,7 @@ class SearchRoomUrl {
         }
         return _roomSlug(segments.first);
       case Constant.kDouyu:
-        if (uri.host != 'www.douyu.com') return null;
+        if (!{'www.douyu.com', 'm.douyu.com'}.contains(uri.host)) return null;
         if (segments.length == 2 && segments.first == 'topic') {
           final id = uri.queryParameters['rid'];
           return id != null && RegExp(r'^\d+$').hasMatch(id) ? id : null;

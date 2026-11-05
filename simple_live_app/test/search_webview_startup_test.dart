@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 // 直接模拟 Windows 插件和路径接口，不改生产依赖配置。
 // ignore: depend_on_referenced_packages
 import 'package:flutter_inappwebview_windows/flutter_inappwebview_windows.dart';
@@ -135,5 +136,33 @@ void main() {
     await oldFailure;
     expect(controller.webViewError.value, isNull);
     expect(controller.webViewLoading.value, isTrue);
+  });
+
+  test('网络恢复实际传递直连参数，且避免复用代理环境的用户目录', () async {
+    final settings = <Map<dynamic, dynamic>>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      settings.add(Map<dynamic, dynamic>.from(call.arguments['settings']));
+      mockEnvironment(call);
+      return true;
+    });
+    final controller = AppSearchController();
+    addTearDown(controller.onClose);
+    controller.selectSite(Sites.allSites[Constant.kHuya]!);
+    final firstEnvironment = await controller.webViewEnvironment;
+    expect(settings.single['additionalBrowserArguments'], isNull);
+    controller.handleLoadError(
+      WebResourceRequest(
+          url: WebUri('https://www.huya.com/'), isForMainFrame: true),
+      WebResourceError(
+          type: WebResourceErrorType.CANNOT_CONNECT_TO_HOST,
+          description: '系统代理无法连接'),
+    );
+    await controller.webViewEnvironment;
+    await Future<void>.delayed(Duration.zero);
+    expect(settings.last['additionalBrowserArguments'], '--no-proxy-server');
+    expect(settings.last['userDataFolder'],
+        isNot(settings.first['userDataFolder']));
+    expect(disposedEnvironments, contains(firstEnvironment!.id));
   });
 }

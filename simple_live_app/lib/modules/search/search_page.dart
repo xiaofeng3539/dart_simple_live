@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:get/get.dart';
 import 'package:simple_live_app/app/app_style.dart';
-import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/search/search_controller.dart';
 import 'package:simple_live_app/modules/search/search_room_url.dart';
+import 'package:simple_live_app/modules/search/search_web_navigation.dart';
 
 class SearchPage extends GetView<AppSearchController> {
   const SearchPage({super.key});
@@ -74,42 +74,30 @@ class SearchPage extends GetView<AppSearchController> {
                     key: ValueKey('${site.id}:$revision'),
                     webViewEnvironment: snapshot.data,
                     initialUrlRequest: URLRequest(
-                      url: WebUri(SearchRoomUrl.homeUriFor(site.id).toString()),
+                      url: WebUri(controller.webViewUrl.toString()),
                     ),
                     initialSettings: InAppWebViewSettings(
                       javaScriptCanOpenWindowsAutomatically: true,
                       supportMultipleWindows: true,
+                      useShouldOverrideUrlLoading: true,
                     ),
-                    initialUserScripts: site.id == Constant.kDouyin
-                        ? UnmodifiableListView([
+                    initialUserScripts: UnmodifiableListView([
                             UserScript(
-                              source: '''
-                      document.addEventListener('click', function(event) {
-                        var target = event.target;
-                        if (!(target instanceof Element)) return;
-                        var link = target.closest('a[href]');
-                        if (link) {
-                          window.flutter_inappwebview.callHandler(
-                            'simpleLiveDouyinRoom', link.href);
-                        }
-                      }, true);
-                    ''',
+                              source: SearchWebNavigation.script,
                               injectionTime:
                                   UserScriptInjectionTime.AT_DOCUMENT_START,
                               forMainFrameOnly: true,
                             ),
-                          ])
-                        : null,
+                          ]),
                     onWebViewCreated: (webViewController) {
                       if (!isCurrentView()) return;
                       controller.webViewController = webViewController;
                       controller.onRoomDetected = _showRoomPrompt;
-                      if (site.id == Constant.kDouyin) {
                         webViewController.addJavaScriptHandler(
-                          handlerName: 'simpleLiveDouyinRoom',
+                          handlerName: SearchWebNavigation.handlerName,
                           callback: (args) {
                             if (isCurrentView() &&
-                                identical(controller.webViewController, webViewController) &&
+                                controller.isCurrentWebView(webViewController, revision) &&
                                 args.isNotEmpty &&
                                 args.first is String) {
                               final uri = Uri.tryParse(args.first as String);
@@ -121,29 +109,49 @@ class SearchPage extends GetView<AppSearchController> {
                             }
                           },
                         );
+                    },
+                    shouldOverrideUrlLoading: (view, action) async {
+                      if (!isCurrentView() ||
+                          !controller.isCurrentWebView(view, revision)) {
+                        return NavigationActionPolicy.CANCEL;
+                      }
+                      return controller.handleNavigation(action);
+                    },
+                    onLoadStart: (view, uri) {
+                      if (!isCurrentView() ||
+                          !controller.isCurrentWebView(view, revision)) {
+                        return;
+                      }
+                      controller.startLoading(uri);
+                      controller.updateUrl(uri);
+                    },
+                    onLoadStop: (view, uri) {
+                      if (!isCurrentView() ||
+                          !controller.isCurrentWebView(view, revision)) {
+                        return;
+                      }
+                      if (controller.finishLoading(uri)) controller.updateUrl(uri);
+                    },
+                    onProgressChanged: (_, progress) {
+                      if (isCurrentView()) {
+                        controller.updateLoadProgress(progress);
                       }
                     },
-                    onLoadStart: (_, uri) {
+                    onReceivedError: (_, request, error) {
                       if (!isCurrentView()) return;
-                      controller.startLoading();
-                      controller.updateUrl(uri);
+                      controller.handleLoadError(request, error);
                     },
-                    onLoadStop: (_, uri) {
-                      if (!isCurrentView()) return;
-                      controller.finishLoading();
-                      controller.updateUrl(uri);
-                    },
-                    onReceivedError: (_, request, __) {
-                      if (!isCurrentView()) return;
-                      if (request.isForMainFrame == true) {
-                        controller.failLoading('网页加载失败，请点击右上角刷新重试');
+                    onReceivedHttpError: (view, request, response) {
+                      if (isCurrentView() &&
+                          controller.isCurrentWebView(view, revision)) {
+                        controller.handleHttpError(request, response);
                       }
                     },
                     onUpdateVisitedHistory: (_, uri, __) {
                       if (isCurrentView()) controller.updateUrl(uri);
                     },
                     onCreateWindow: (view, action) => isCurrentView() &&
-                            identical(controller.webViewController, view)
+                            controller.isCurrentWebView(view, revision)
                         ? controller.openPopup(action)
                         : Future.value(false),
                   ),

@@ -1,3 +1,4 @@
+import 'package:simple_live_app/widgets/live_message_content.dart';
 import 'dart:io';
 
 import 'package:floating/floating.dart';
@@ -201,76 +202,77 @@ class LiveRoomPage extends StatelessWidget {
           buildMessageArea(),
           buildBottomActions(context),
         ],
-        if (!fullScreen && !portrait) Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            border: Border(
-              top: BorderSide(
-                color: Colors.grey.withAlpha(25),
+        if (!fullScreen && !portrait)
+          Container(
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              border: Border(
+                top: BorderSide(
+                  color: Colors.grey.withAlpha(25),
+                ),
               ),
             ),
-          ),
-          padding: AppStyle.edgeInsetsV4.copyWith(
-            bottom: MediaQuery.paddingOf(context).bottom + 4,
-          ),
-          child: Row(
-            children: [
-              TextButton.icon(
-                style: TextButton.styleFrom(
-                  textStyle: const TextStyle(fontSize: 14),
+            padding: AppStyle.edgeInsetsV4.copyWith(
+              bottom: MediaQuery.paddingOf(context).bottom + 4,
+            ),
+            child: Row(
+              children: [
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    textStyle: const TextStyle(fontSize: 14),
+                  ),
+                  onPressed: controller.refreshRoom,
+                  icon: const Icon(Remix.refresh_line),
+                  label: const Text("刷新"),
                 ),
-                onPressed: controller.refreshRoom,
-                icon: const Icon(Remix.refresh_line),
-                label: const Text("刷新"),
-              ),
-              AppStyle.hGap4,
-              Obx(
-                () => controller.followed.value
-                    ? TextButton.icon(
-                        style: TextButton.styleFrom(
-                          textStyle: const TextStyle(fontSize: 14),
+                AppStyle.hGap4,
+                Obx(
+                  () => controller.followed.value
+                      ? TextButton.icon(
+                          style: TextButton.styleFrom(
+                            textStyle: const TextStyle(fontSize: 14),
+                          ),
+                          onPressed: controller.removeFollowUser,
+                          icon: const Icon(Remix.heart_fill),
+                          label: const Text("取消关注"),
+                        )
+                      : TextButton.icon(
+                          style: TextButton.styleFrom(
+                            textStyle: const TextStyle(fontSize: 14),
+                          ),
+                          onPressed: controller.followUser,
+                          icon: const Icon(Remix.heart_line),
+                          label: const Text("关注"),
                         ),
-                        onPressed: controller.removeFollowUser,
-                        icon: const Icon(Remix.heart_fill),
-                        label: const Text("取消关注"),
-                      )
-                    : TextButton.icon(
-                        style: TextButton.styleFrom(
-                          textStyle: const TextStyle(fontSize: 14),
-                        ),
-                        onPressed: controller.followUser,
-                        icon: const Icon(Remix.heart_line),
-                        label: const Text("关注"),
-                      ),
-              ),
-              const Expanded(child: Center()),
-              TextButton.icon(
-                style: TextButton.styleFrom(
-                  textStyle: const TextStyle(fontSize: 14),
                 ),
-                onPressed: controller.share,
-                icon: const Icon(Remix.share_line),
-                label: const Text("分享"),
-              ),
-              TextButton.icon(
-                style: TextButton.styleFrom(
-                  textStyle: const TextStyle(fontSize: 14),
+                const Expanded(child: Center()),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    textStyle: const TextStyle(fontSize: 14),
+                  ),
+                  onPressed: controller.share,
+                  icon: const Icon(Remix.share_line),
+                  label: const Text("分享"),
                 ),
-                onPressed: controller.copyUrl,
-                icon: const Icon(Remix.file_copy_line),
-                label: const Text("复制链接"),
-              ),
-              TextButton.icon(
-                style: TextButton.styleFrom(
-                  textStyle: const TextStyle(fontSize: 14),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    textStyle: const TextStyle(fontSize: 14),
+                  ),
+                  onPressed: controller.copyUrl,
+                  icon: const Icon(Remix.file_copy_line),
+                  label: const Text("复制链接"),
                 ),
-                onPressed: controller.copyPlayUrl,
-                icon: const Icon(Remix.file_copy_line),
-                label: const Text("复制播放直链"),
-              ),
-            ],
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    textStyle: const TextStyle(fontSize: 14),
+                  ),
+                  onPressed: controller.copyPlayUrl,
+                  icon: const Icon(Remix.file_copy_line),
+                  label: const Text("复制播放直链"),
+                ),
+              ],
+            ),
           ),
-        ),
       ],
     );
   }
@@ -310,10 +312,10 @@ class LiveRoomPage extends StatelessWidget {
         ),
         Obx(
           () => Visibility(
-            visible: !controller.liveStatus.value,
+            visible: controller.roomOffline.value,
             child: const Center(
               child: Text(
-                "未开播",
+                "主播已下播",
                 style: TextStyle(fontSize: 16, color: Colors.white),
               ),
             ),
@@ -556,79 +558,23 @@ class LiveRoomPage extends StatelessWidget {
   }
 
   Widget buildMessageItem(LiveMessage message) {
-    if (message.userName == "LiveSysMessage") {
-      return Obx(
-        () => Text(
-          message.message,
-          style: TextStyle(
-            color: Colors.grey,
-            fontSize: AppSettingsController.instance.chatTextSize.value,
-          ),
-        ),
-      );
-    }
-
-    return Obx(
-      () => AppSettingsController.instance.chatBubbleStyle.value
-          ? Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Flexible(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.blueGrey.withAlpha(25),
-                      //borderRadius: AppStyle.radius8,
-                      borderRadius: const BorderRadius.only(
-                        topRight: Radius.circular(12),
-                        bottomLeft: Radius.circular(12),
-                        bottomRight: Radius.circular(12),
-                      ),
-                    ),
-                    padding:
-                        AppStyle.edgeInsetsA4.copyWith(left: 12, right: 12),
-                    child: Text.rich(
-                      TextSpan(
-                        text: "${message.userName}：",
-                        style: TextStyle(
-                          color: Colors.grey,
-                          fontSize:
-                              AppSettingsController.instance.chatTextSize.value,
-                        ),
-                        children: [
-                          TextSpan(
-                            text: message.message,
-                            style: TextStyle(
-                              color: Get.isDarkMode
-                                  ? Colors.white
-                                  : AppColors.black333,
-                            ),
-                          )
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          : Text.rich(
-              TextSpan(
-                text: "${message.userName}：",
-                style: TextStyle(
-                  color: Colors.grey,
-                  fontSize: AppSettingsController.instance.chatTextSize.value,
-                ),
-                children: [
-                  TextSpan(
-                    text: message.message,
-                    style: TextStyle(
-                      color: Get.isDarkMode ? Colors.white : AppColors.black333,
-                    ),
-                  )
-                ],
-              ),
-            ),
-    );
+    return Obx(() {
+      final size = AppSettingsController.instance.chatTextSize.value;
+      if (message.userName == 'LiveSysMessage') {
+        return Text(message.message,style:TextStyle(color:Colors.grey,fontSize:size));
+      }
+      final content = LiveMessageContent(userName:message.userName,
+        parts:controller.messageParts(message),fontSize:size,
+        color:Get.isDarkMode ? Colors.white : AppColors.black333);
+      if (!AppSettingsController.instance.chatBubbleStyle.value) return content;
+      return Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        Flexible(child:Container(
+          decoration:BoxDecoration(color:Colors.blueGrey.withAlpha(25),
+            borderRadius:const BorderRadius.only(topRight:Radius.circular(12),
+              bottomLeft:Radius.circular(12),bottomRight:Radius.circular(12))),
+          padding:AppStyle.edgeInsetsA4.copyWith(left:12,right:12),child:content)),
+      ]);
+    });
   }
 
   Widget buildSuperChats() {

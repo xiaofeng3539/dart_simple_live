@@ -11,6 +11,7 @@ import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
+import 'package:simple_live_app/services/local_storage_service.dart';
 
 class FollowUserController extends BasePageController<FollowUser> {
   StreamSubscription<dynamic>? onUpdatedIndexedStream;
@@ -18,6 +19,7 @@ class FollowUserController extends BasePageController<FollowUser> {
 
   /// 0:全部 1:直播中 2:未直播
   var filterMode = FollowUserTag(id: "0", tag: "全部", userId: []).obs;
+  final defaultFilterId = '0'.obs;
   RxList<FollowUserTag> tagList = [
     FollowUserTag(id: "0", tag: "全部", userId: []),
     FollowUserTag(id: "1", tag: "直播中", userId: []),
@@ -28,6 +30,7 @@ class FollowUserController extends BasePageController<FollowUser> {
   RxList<FollowUserTag> userTagList = <FollowUserTag>[].obs;
 
   final List<String> _categoryOrder = [];
+  int _snapshotRevision = 0;
 
   List<FollowUser> sortCategoryMembers(
       List<FollowUser> members, List<String> siteOrder) {
@@ -83,6 +86,7 @@ class FollowUserController extends BasePageController<FollowUser> {
 
   @override
   void onInit() {
+    restoreDefaultFilter();
     onUpdatedIndexedStream = EventBus.instance.listen(
       EventBus.kBottomNavigationBarClicked,
           (index) {
@@ -102,7 +106,30 @@ class FollowUserController extends BasePageController<FollowUser> {
   Future refreshData() async {
     await FollowService.instance.loadData();
     updateTagList();
-    super.refreshData();
+    await loadData();
+  }
+
+  @override
+  Future<void> loadData() async {
+    if (loadding || isClosed) return;
+    loadding = true;
+    pageLoadding.value = true;
+    pageError.value = false;
+    final revision = _snapshotRevision;
+    try {
+      // 关注是完整的本地快照，不使用基类的分页 addAll。
+      final result = await getData(1, pageSize);
+      if (isClosed) return;
+      // 等待期间可能切换筛选、开关播或取消关注，旧结果不能覆盖新状态。
+      _publishSnapshot(revision == _snapshotRevision ? result : _filteredUsers());
+    } catch (error) {
+      if (!isClosed && revision == _snapshotRevision) {
+        handleError(error, showPageError: list.isEmpty);
+      }
+    } finally {
+      loadding = false;
+      if (!isClosed) pageLoadding.value = false;
+    }
   }
 
   @override
@@ -110,16 +137,25 @@ class FollowUserController extends BasePageController<FollowUser> {
     if (page > 1) {
       return Future.value([]);
     }
+    return _filteredUsers();
+  }
+
+  List<FollowUser> _filteredUsers() {
+    final service = FollowService.instance;
+    final Iterable<FollowUser> source;
     if (filterMode.value.tag == "全部") {
-      return FollowService.instance.followList.value;
+      source = service.followList;
     } else if (filterMode.value.tag == "直播中") {
-      return FollowService.instance.liveList.value;
+      source = service.liveList;
     } else if (filterMode.value.tag == "未开播") {
-      return FollowService.instance.notLiveList.value;
+      source = service.notLiveList;
     } else {
-      FollowService.instance.filterDataByTag(filterMode.value);
-      return FollowService.instance.curTagFollowList.value;
+      service.filterDataByTag(filterMode.value);
+      source = service.curTagFollowList;
     }
+    // 页面只能持有独立快照，不能共享服务的可变底层列表。
+    // 只复制列表容器 (O(n))，保留 FollowUser 身份与响应式开播状态。
+    return source.toList();
   }
 
   void updateTagList() {
@@ -133,21 +169,43 @@ class FollowUserController extends BasePageController<FollowUser> {
   }
 
   void filterData() {
-    if (filterMode.value.tag == "全部") {
-      list.assignAll(FollowService.instance.followList.value);
-    } else if (filterMode.value.tag == "直播中") {
-      list.assignAll(FollowService.instance.liveList.value);
-    } else if (filterMode.value.tag == "未开播") {
-      list.assignAll(FollowService.instance.notLiveList.value);
-    } else {
-      FollowService.instance.filterDataByTag(filterMode.value);
-      list.assignAll(FollowService.instance.curTagFollowList);
-    }
+    _publishSnapshot(_filteredUsers());
+  }
+
+  void _publishSnapshot(List<FollowUser> users) {
+    _snapshotRevision++;
+    // 只替换容器，保留原主播对象；不按昵称合并跨平台同名主播。
+    list.value = users;
+    currentPage = 1;
+    canLoadMore.value = false;
+    pageEmpty.value = users.isEmpty;
+    pageError.value = false;
   }
 
   void setFilterMode(FollowUserTag tag) {
     filterMode.value = tag;
     filterData();
+  }
+
+  void restoreDefaultFilter() {
+    final saved = Get.isRegistered<LocalStorageService>()
+        ? LocalStorageService.instance
+            .getValue<dynamic>(LocalStorageService.kFollowDefaultFilter, '0')
+        : '0';
+    // 只允许内置状态，旧值或损坏的设置不能变成自定义标签筛选。
+    final tag = tagList
+        .take(3)
+        .firstWhere((tag) => tag.id == saved, orElse: () => tagList.first);
+    defaultFilterId.value = tag.id;
+    setFilterMode(tag);
+  }
+
+  Future<void> setDefaultFilter(FollowUserTag tag) async {
+    if (!tagList.take(3).contains(tag)) return;
+    await LocalStorageService.instance
+        .setValue(LocalStorageService.kFollowDefaultFilter, tag.id);
+    // 保存成功才更新菜单标记；普通点击仍只调用 setFilterMode。
+    defaultFilterId.value = tag.id;
   }
 
   void removeItem(FollowUser item) async {
@@ -249,6 +307,7 @@ class FollowUserController extends BasePageController<FollowUser> {
   @override
   void onClose() {
     onUpdatedIndexedStream?.cancel();
+    onUpdatedListStream?.cancel();
     super.onClose();
   }
 }

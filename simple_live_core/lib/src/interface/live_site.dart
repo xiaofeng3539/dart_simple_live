@@ -65,6 +65,12 @@ class LiveSite {
     ));
   }
 
+  /// 预取该房间后续要用的接口数据。
+  ///
+  /// 只依赖 roomId 的请求可以在进房时先发，和房间详情叠在一起等。
+  /// 不支持的平台留空实现即可。
+  void prefetchRoom(String roomId) {}
+
   /// 读取房间清晰度
   Future<List<LivePlayQuality>> getPlayQualites(
       {required LiveRoomDetail detail}) {

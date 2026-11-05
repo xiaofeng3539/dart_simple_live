@@ -6,6 +6,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/sync_service.dart';
+import 'package:simple_live_app/services/remote_sync_connection.dart';
 
 enum SignalRConnectionState { connecting, connected, disconnected }
 
@@ -50,6 +51,7 @@ class SignalRService {
   final Map<String, Completer<Map<String, dynamic>>> _pending = {};
   int _nextRequestId = 0;
   bool _disposed = false;
+  final _remoteConnection = RemoteSyncConnection();
 
   Future<void> connect({List<String> relayAddresses = const []}) async {
     await disconnect();
@@ -57,7 +59,7 @@ class SignalRService {
     try {
       final socket = Platform.isAndroid || Platform.isIOS
           ? await _connectMobile(relayAddresses)
-          : await WebSocket.connect(kUrl).timeout(const Duration(seconds: 15));
+          : await _remoteConnection.connect(kUrl);
       _socket = socket;
       _subscription = socket.listen(
         _onMessage,
@@ -103,7 +105,7 @@ class SignalRService {
       }
     }
 
-    attempt(WebSocket.connect(kUrl).timeout(const Duration(seconds: 15)));
+    attempt(_remoteConnection.connect(kUrl));
     attempt(_connectViaLanRelay(relayAddresses));
     return result.future;
   }

@@ -11,6 +11,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/search/search_room_url.dart';
+import 'package:simple_live_app/modules/search/search_web_navigation.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 
 class AppSearchController extends GetxController {
@@ -27,10 +28,25 @@ class AppSearchController extends GetxController {
   Timer? _loadTimer;
   bool _closing = false;
   bool _openingRoom = false;
+  bool _directConnection = false;
+  Uri? _navigationUrl;
+  Uri? _loadingUrl;
+  bool _httpErrorForNavigation = false;
+
+  Uri get webViewUrl =>
+      _navigationUrl ?? SearchRoomUrl.homeUriFor(selectedSite.value!.id);
+
+  bool isCurrentWebView(InAppWebViewController? view, int revision) =>
+      !_closing && !isClosed && webViewRevision.value == revision &&
+      (identical(webViewController, view) ||
+          (webViewController != null && view != null &&
+              // Windows creates a fresh Dart wrapper for onWebViewCreated,
+              // while navigation callbacks reuse another wrapper. Their
+              // underlying platform controller identifies the actual WebView.
+              identical(webViewController!.platform, view.platform)));
 
   bool _isCurrent(InAppWebViewController? view, int revision) =>
-      !_closing && !isClosed && webViewRevision.value == revision &&
-      identical(webViewController, view);
+      isCurrentWebView(view, revision);
 
   Future<WebViewEnvironment?> get webViewEnvironment =>
       _webViewEnvironment ??= _createWebViewEnvironment();
@@ -38,12 +54,19 @@ class AppSearchController extends GetxController {
   Future<WebViewEnvironment?> _createWebViewEnvironment() async {
     if (!Platform.isWindows) return null;
     final revision = webViewRevision.value;
+    final directConnection = _directConnection;
     try {
       final supportDir = await getApplicationSupportDirectory();
-      final profileDir = Directory(p.join(supportDir.path, 'search_webview'));
+      // WebView2 同一用户目录的运行实例必须使用相同参数，直连使用独立目录。
+      final profileDir = Directory(p.join(supportDir.path,
+          directConnection ? 'search_webview_direct' : 'search_webview'));
       await profileDir.create(recursive: true);
       final creation = WebViewEnvironment.create(
-        settings: WebViewEnvironmentSettings(userDataFolder: profileDir.path),
+        settings: WebViewEnvironmentSettings(
+          userDataFolder: profileDir.path,
+          additionalBrowserArguments:
+              directConnection ? '--no-proxy-server' : null,
+        ),
       );
       try {
         return await creation.timeout(const Duration(seconds: 20));
@@ -72,9 +95,11 @@ class AppSearchController extends GetxController {
 
   void selectSite(Site site) {
     if (_closing || isClosed) return;
+    webViewController = null;
+    _navigationUrl = null;
     webViewRevision.value++;
     webViewVisible.value = true;
-    startLoading();
+    startLoading(SearchRoomUrl.homeUriFor(site.id));
     roomId.value = null;
     _lastPromptedRoom = null;
     selectedSite.value = site;
@@ -82,11 +107,18 @@ class AppSearchController extends GetxController {
 
   void updateUrl(Uri? uri) {
     if (_closing || isClosed || !webViewVisible.value) return;
+    if (uri != null && (uri.scheme == 'https' || uri.scheme == 'http')) {
+      _navigationUrl = uri;
+    }
     final site = selectedSite.value;
     final detectedRoomId = site == null || uri == null
         ? null
         : SearchRoomUrl.roomIdFor(site.id, uri);
     roomId.value = detectedRoomId;
+    if (detectedRoomId == null && uri != null &&
+        (uri.scheme == 'https' || uri.scheme == 'http')) {
+      _lastPromptedRoom = null;
+    }
     if (site != null && detectedRoomId != null) {
       final roomKey = '${site.id}:$detectedRoomId';
       if (_lastPromptedRoom != roomKey) {
@@ -98,7 +130,7 @@ class AppSearchController extends GetxController {
 
   void reset() {
     webViewRevision.value++;
-    webViewController?.removeJavaScriptHandler(handlerName: 'simpleLiveDouyinRoom');
+    webViewController?.removeJavaScriptHandler(handlerName: SearchWebNavigation.handlerName);
     onRoomDetected = null;
     _loadTimer?.cancel();
     webViewLoading.value = false;
@@ -107,6 +139,9 @@ class AppSearchController extends GetxController {
     roomId.value = null;
     _lastPromptedRoom = null;
     selectedSite.value = null;
+    _navigationUrl = null;
+    _loadingUrl = null;
+    _httpErrorForNavigation = false;
     webViewController = null;
   }
 
@@ -143,28 +178,96 @@ class AppSearchController extends GetxController {
     }));
   }
 
-  void startLoading() {
+  void startLoading([Uri? uri]) {
     if (_closing || isClosed) return;
+    _loadingUrl = uri ?? _navigationUrl;
+    _httpErrorForNavigation = false;
     webViewLoading.value = true;
     webViewError.value = null;
     _loadTimer?.cancel();
     _loadTimer = Timer(const Duration(seconds: 20), () {
       if (webViewLoading.value) {
-        webViewLoading.value = false;
-        webViewError.value = '网页加载超时，请点击右上角刷新重试';
+        if (webViewController != null && _retryWithDirectConnection()) return;
+        failLoading('网页加载超时，请检查网络后重新加载');
       }
     });
   }
 
-  void finishLoading() {
-    if (_closing || isClosed) return;
+  bool _retryWithDirectConnection() {
+    // 抖音进入播放器时网页被隐藏；此时重建会使 openRoom 无法恢复旧视图。
+    if (!Platform.isWindows || _directConnection || _closing || isClosed ||
+        !webViewVisible.value || selectedSite.value == null) {
+      return false;
+    }
+    Log.w('搜索网页网络连接失败，尝试直连：$_navigationUrl');
+    _directConnection = true;
+    webViewController = null;
+    _disposeWebViewEnvironment();
+    webViewRevision.value++;
+    startLoading();
+    return true;
+  }
+
+  void updateLoadProgress(int progress) {
+    // Windows 插件的 66 对应 DOMContentLoaded；100 在失败时也会发送。
+    // 页面已可操作后不再等待广告、图片等非必要资源，避免误报超时。
+    if (Platform.isWindows && progress >= 66 && progress < 100) {
+      finishLoading();
+    }
+  }
+
+  void handleLoadError(WebResourceRequest request, WebResourceError error) {
+    if (_closing || isClosed || request.isForMainFrame != true) return;
+    // 快速跳转或刷新取消的是旧导航，不是新页面加载失败。
+    if (error.type == WebResourceErrorType.CANCELLED) return;
+    Log.w('搜索网页加载失败：${request.url} ${error.type} ${error.description}');
+    final connectionError = {
+      // WebView2 未映射部分 Chromium 网络错误（包括代理连接失败）。
+      WebResourceErrorType.UNKNOWN,
+      WebResourceErrorType.TIMEOUT,
+      WebResourceErrorType.HOST_LOOKUP,
+      WebResourceErrorType.CANNOT_CONNECT_TO_HOST,
+      WebResourceErrorType.SERVER_UNREACHABLE,
+      WebResourceErrorType.CONNECTION_ABORTED,
+      WebResourceErrorType.RESET,
+      WebResourceErrorType.NETWORK_CONNECTION_LOST,
+      WebResourceErrorType.IO,
+      WebResourceErrorType.VALID_PROXY_AUTHENTICATION_REQUIRED,
+    }.contains(error.type);
+    if (connectionError && _retryWithDirectConnection()) return;
+    failLoading('网页加载失败（${error.type}），请检查网络后重新加载');
+  }
+
+  void handleHttpError(WebResourceRequest request, WebResourceResponse response) {
+    if (_closing || isClosed || request.isForMainFrame != true ||
+        !_matchesLoadingUrl(request.url)) {
+      return;
+    }
+    _httpErrorForNavigation = true;
+    Log.w('搜索网页 HTTP 错误：${request.url} ${response.statusCode}');
+    failLoading('网站返回错误（HTTP ${response.statusCode}），请稍后重新加载');
+  }
+
+  // Compare document URLs, not fragments: a hash change is not a new request.
+  // A late old-URL callback must not settle or fail the newer navigation.
+  bool _matchesLoadingUrl(Uri? uri) =>
+      uri == null || _loadingUrl == null ||
+      uri.removeFragment() == _loadingUrl!.removeFragment();
+
+  bool finishLoading([Uri? uri]) {
+    if (_closing || isClosed || !_matchesLoadingUrl(uri)) return false;
     _loadTimer?.cancel();
     webViewLoading.value = false;
+    // Android also finishes documents served with HTTP 4xx/5xx. Only a new
+    // navigation resets that failure; a late success may still clear a timeout.
+    if (!_httpErrorForNavigation) webViewError.value = null;
+    return true;
   }
 
   void failLoading(String message) {
     if (_closing || isClosed) return;
-    finishLoading();
+    _loadTimer?.cancel();
+    webViewLoading.value = false;
     webViewError.value = message;
   }
 
@@ -173,7 +276,7 @@ class AppSearchController extends GetxController {
     if (_closing) return;
     _closing = true;
     webViewRevision.value++;
-    webViewController?.removeJavaScriptHandler(handlerName: 'simpleLiveDouyinRoom');
+    webViewController?.removeJavaScriptHandler(handlerName: SearchWebNavigation.handlerName);
     webViewController = null;
     onRoomDetected = null;
     _loadTimer?.cancel();
@@ -190,6 +293,11 @@ class AppSearchController extends GetxController {
       await webViewController!.loadUrl(urlRequest: action.request);
     }
     return false;
+  }
+
+  NavigationActionPolicy handleNavigation(NavigationAction action) {
+    if (action.isForMainFrame) updateUrl(action.request.url);
+    return NavigationActionPolicy.ALLOW;
   }
 
   Future<void> openRoom({String? detectedRoomId}) async {

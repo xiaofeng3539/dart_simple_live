@@ -15,6 +15,7 @@ import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/models/db/history.dart';
 import 'package:simple_live_app/services/bilibili_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/remote_sync_connection.dart';
 import 'package:udp/udp.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart' as shelf_io;
@@ -224,8 +225,8 @@ class SyncService extends GetxService {
 
   void _relayRemoteSync(WebSocketChannel client) async {
     try {
-      final upstream = await WebSocket.connect(Constant.kRemoteSyncUrl)
-          .timeout(const Duration(seconds: 15));
+      final upstream =
+          await RemoteSyncConnection().connect(Constant.kRemoteSyncUrl);
       client.stream.listen(
         upstream.add,
         onDone: upstream.close,
@@ -298,22 +299,33 @@ class SyncService extends GetxService {
     try {
       var body = await request.readAsString();
       Log.d('_syncFollowUserTagRequest: $body');
-      var jsonBody = json.decode(body);
-      for (var item in jsonBody) {
-        var tag = FollowUserTag.fromJson(item);
-        final localTag = DBService.instance.tagBox.get(tag.id);
-        if (localTag == null) {
-          await DBService.instance.tagBox.put(tag.id, tag);
-        } else {
-          final userIds = {...localTag.userId, ...tag.userId}.toList();
-          if (userIds.length != localTag.userId.length) {
-            await DBService.instance.tagBox.put(
-              tag.id,
-              localTag.copyWith(userId: userIds),
-            );
+      final jsonBody = json.decode(body) as List;
+      final tags = jsonBody
+          .map((item) =>
+              FollowUserTag.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList();
+      final db = DBService.instance;
+      await db.normalizeFollowTags();
+      // LAN sync shares the tag mutation queue with migration and WebDAV.
+      // Keep read + union + write together so a migration cannot erase or
+      // overwrite a tag received concurrently from another device.
+      await db.runFollowTagMutation(() async {
+        for (final tag in tags) {
+          final localTag = db.tagBox.get(tag.id);
+          if (localTag == null) {
+            await db.tagBox.put(tag.id, tag);
+          } else {
+            final userIds = {...localTag.userId, ...tag.userId}.toList();
+            if (userIds.length != localTag.userId.length) {
+              await db.tagBox.put(
+                tag.id,
+                localTag.copyWith(userId: userIds),
+              );
+            }
           }
         }
-      }
+      });
+      await db.normalizeFollowTags();
 
       SmartDialog.showToast('已同步标签列表');
       EventBus.instance.emit(Constant.kUpdateFollow, 0);

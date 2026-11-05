@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,12 +14,15 @@ import 'package:simple_live_app/widgets/filter_button.dart';
 import 'package:simple_live_app/widgets/follow_user_item.dart';
 
 class _Service extends FollowService {
+  int loadCount = 0;
   // 测试使用内存数据，不启动定时器或请求网络。
   @override
   // ignore: must_call_super
   void onInit() {}
   @override
-  Future<void> loadData({bool updateStatus = true}) async {}
+  Future<void> loadData({bool updateStatus = true}) async {
+    loadCount++;
+  }
 }
 
 class _Settings extends AppSettingsController {
@@ -68,6 +72,122 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
   }
 
+  for (final platform in [TargetPlatform.android, TargetPlatform.windows]) {
+    testWidgets('$platform复用分类与排序，开播补分类后同步更新并保留筛选', (tester) async {
+      debugDefaultTargetPlatformOverride = platform;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final high = user('虎牙高', 'LOL', 2)..heat = 100;
+      final low = user('虎牙低', '英雄联盟', 2)..heat = 10;
+      final douyin = FollowUser.fromJson({
+        'id': 'douyin_主播', 'roomId': '主播', 'siteId': 'douyin',
+        'userName': '抖音', 'face': '', 'addTime': '2026-10-06T00:00:00',
+        'categoryName': '英雄联盟',
+      })..heat = 1;
+      douyin.liveStatus.value = 2;
+      final offline = user('后期开播', null, 1);
+      final unknown = user('确无分类', null, 2);
+      final users = [low, high, douyin, offline, unknown];
+      final service = Get.find<FollowService>();
+      service.followList.assignAll(users);
+      service.filterData();
+      controller.filterData();
+      await show(tester, platform == TargetPlatform.android
+          ? const Size(400, 1200) : const Size(2200, 1200));
+      List<String> names() => tester.widgetList<FollowUserItem>(
+          find.byType(FollowUserItem)).map((card) => card.item.userName).toList();
+      expect(find.text('英雄联盟 3人'), findsOneWidget);
+      expect(find.text('其他 2人'), findsOneWidget);
+      expect(names(), ['抖音', '虎牙高', '虎牙低', '确无分类', '后期开播']);
+
+      // 模拟共享服务完成最新分类与状态更新，页面不另行识别分类。
+      offline.categoryName = 'VALORANT';
+      offline.liveStatus.value = 2;
+      service.filterData();
+      controller.filterData();
+      await tester.pump();
+      expect(find.text('无畏契约 1人'), findsOneWidget);
+      expect(find.text('其他 1人'), findsOneWidget);
+      expect(names(), ['抖音', '虎牙高', '虎牙低', '后期开播', '确无分类']);
+
+      Get.find<AppSettingsController>().siteSort.assignAll(['huya', 'douyin']);
+      high.heat = 5;
+      service.filterData();
+      controller.filterData();
+      await tester.pump();
+      expect(names(), ['虎牙低', '虎牙高', '抖音', '后期开播', '确无分类']);
+      await tester.tap(find.widgetWithText(FilterButton, '未开播'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FollowUserItem), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 2));
+      debugDefaultTargetPlatformOverride = null;
+    });
+  }
+
+  testWidgets('手机横向滑动与点击共用淡入淡出，纵向与边界不切换、不请求', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await show(tester, const Size(400, 1000));
+    final service = Get.find<FollowService>() as _Service;
+    final loads = service.loadCount;
+    final content = find.byType(CustomScrollView);
+    await tester.drag(content, const Offset(-160, 0));
+    await tester.pumpAndSettle();
+    expect(controller.filterMode.value.tag, '直播中');
+    expect(find.widgetWithText(FilterButton, '直播中').evaluate().single.widget,
+        isA<FilterButton>().having((button) => button.selected, 'selected', true));
+    await tester.drag(content, const Offset(0, -100));
+    await tester.pumpAndSettle();
+    expect(controller.filterMode.value.tag, '直播中');
+    await tester.drag(content, const Offset(-160, 0));
+    await tester.pumpAndSettle();
+    expect(controller.filterMode.value.tag, '未开播');
+    await tester.drag(content, const Offset(-160, 0));
+    await tester.pumpAndSettle();
+    expect(controller.filterMode.value.tag, '未开播');
+    await tester.drag(content, const Offset(160, 0));
+    await tester.pumpAndSettle();
+    expect(controller.filterMode.value.tag, '直播中');
+    await tester.tap(find.widgetWithText(FilterButton, '全部'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 40));
+    final fade = tester.widget<FadeTransition>(find.ancestor(
+        of: content, matching: find.byType(FadeTransition)).first);
+    expect(fade.opacity.value, lessThan(1));
+    expect(fade.opacity.value, greaterThan(0));
+    await tester.pumpAndSettle();
+    expect(controller.filterMode.value.tag, '全部');
+    expect(find.byType(FollowUserItem), findsNWidgets(4));
+    expect(service.loadCount, loads);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 2));
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('手机连续点击以最后选择为准，短滑动不切换，退出取消动画', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await show(tester, const Size(400, 1000));
+    await tester.drag(find.byType(CustomScrollView), const Offset(-35, 0));
+    await tester.pumpAndSettle();
+    expect(controller.filterMode.value.tag, '全部');
+    await tester.tap(find.widgetWithText(FilterButton, '直播中'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.tap(find.widgetWithText(FilterButton, '未开播'));
+    await tester.pumpAndSettle();
+    expect(controller.filterMode.value.tag, '未开播');
+    await tester.tap(find.widgetWithText(FilterButton, '全部'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 2));
+    expect(controller.filterMode.value.tag, '未开播');
+    expect(tester.takeException(), isNull);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('相同游戏合并并保持组内顺序，未知分类归其他，复用原主播卡片', (tester) async {
     await show(tester, const Size(2200, 1200));
     expect(find.text('英雄联盟 2人'), findsOneWidget);
@@ -86,13 +206,13 @@ void main() {
   testWidgets('先用原顶部筛选过滤，再计算分组人数，窄窗口无溢出', (tester) async {
     await show(tester, const Size(400, 1000));
     await tester.tap(find.widgetWithText(FilterButton, '直播中'));
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
     expect(find.text('英雄联盟 1人'), findsOneWidget);
     expect(find.text('无畏契约 1人'), findsOneWidget);
     expect(find.text('其他 1人'), findsNothing);
     expect(find.byType(FollowUserItem), findsNWidgets(2));
     await tester.tap(find.widgetWithText(FilterButton, '未开播'));
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
     expect(find.text('英雄联盟 1人'), findsOneWidget);
     expect(find.text('其他 1人'), findsOneWidget);
     expect(find.text('无畏契约 1人'), findsNothing);

@@ -11,7 +11,7 @@ import 'package:get/get.dart';
 import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:canvas_danmaku/canvas_danmaku.dart';
+import 'package:simple_live_app/widgets/danmaku/canvas_danmaku.dart';
 import 'package:volume_controller/volume_controller.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
@@ -19,6 +19,7 @@ import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/custom_throttle.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
+import 'package:simple_live_app/services/system_proxy_service.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -59,12 +60,15 @@ mixin PlayerMixin {
   Future<void> _configurePlayer() async {
     var pp = player.platform as NativePlayer;
     // 直播使用内存缓冲，短暂抖动后补足缓存再恢复，避免反复转圈。
-    await pp.setProperty('cache-on-disk', 'no');
-    await pp.setProperty('cache-secs', '8');
-    await pp.setProperty('cache-pause', 'yes');
-    await pp.setProperty('cache-pause-wait', '2');
-    await pp.setProperty('demuxer-max-back-bytes', '4194304');
-    await pp.setProperty('network-timeout', '10');
+    // 这些参数互不依赖，并发下发，省掉串行 IPC 的等待。
+    await Future.wait([
+      pp.setProperty('cache-on-disk', 'no'),
+      pp.setProperty('cache-secs', '8'),
+      pp.setProperty('cache-pause', 'yes'),
+      pp.setProperty('cache-pause-wait', '2'),
+      pp.setProperty('demuxer-max-back-bytes', '4194304'),
+      pp.setProperty('network-timeout', '10'),
+    ]);
     // 设置音频输出驱动
     if (AppSettingsController.instance.customPlayerOutput.value) {
       if (player.platform is NativePlayer) {
@@ -78,6 +82,13 @@ mixin PlayerMixin {
     if (Platform.isAndroid) {
       await pp.setProperty('force-seekable', 'yes');
     }
+  }
+
+  Future<void> configurePlaybackProxy(String url) async {
+    if (!Platform.isAndroid) return;
+    final proxy = SystemProxyService.instance.playbackProxy(url) ?? '';
+    // Native mpv is outside dart:io and must receive the same per-host routing.
+    await (player.platform as NativePlayer).setProperty('http-proxy', proxy);
   }
 
   /// 视频控制器

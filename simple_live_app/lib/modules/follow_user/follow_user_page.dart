@@ -1,5 +1,4 @@
-import 'dart:io';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_easyrefresh/easy_refresh.dart';
 import 'package:get/get.dart';
@@ -12,6 +11,7 @@ import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/modules/follow_user/follow_user_controller.dart';
 import 'package:simple_live_app/modules/follow_user/follow_category_name.dart';
+import 'package:simple_live_app/modules/indexed/indexed_controller.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/widgets/filter_button.dart';
@@ -19,8 +19,124 @@ import 'package:simple_live_app/widgets/follow_user_item.dart';
 import 'package:simple_live_app/widgets/status/app_empty_widget.dart';
 import 'package:simple_live_app/widgets/status/app_error_widget.dart';
 
-class FollowUserPage extends GetView<FollowUserController> {
+class FollowUserPage extends StatefulWidget {
   const FollowUserPage({Key? key}) : super(key: key);
+
+  @override
+  State<FollowUserPage> createState() => _FollowUserPageState();
+}
+
+class _FollowUserPageState extends State<FollowUserPage>
+    with SingleTickerProviderStateMixin {
+  FollowUserController get controller => Get.find<FollowUserController>();
+  late final AnimationController _filterFade =
+      AnimationController(vsync: this, value: 1);
+  FollowUserTag? _targetFilter;
+  double _horizontalDistance = 0;
+  int _filterChange = 0;
+  Worker? _navigationWorker;
+
+  @override
+  void initState() {
+    super.initState();
+    controller.restoreDefaultFilter();
+    // 主导航缓存页面；返回关注页时也恢复默认，而非沿用临时筛选。
+    if (Get.isRegistered<IndexedController>()) {
+      final navigation = Get.find<IndexedController>();
+      _navigationWorker = ever<int>(navigation.index, (index) {
+        if (index >= 0 &&
+            index < navigation.items.length &&
+            navigation.items[index].index == 1) {
+          _filterChange++;
+          _targetFilter = null;
+          _filterFade.value = 1;
+          controller.restoreDefaultFilter();
+        }
+      });
+    }
+  }
+
+  Future<void> _showDefaultFilterMenu(
+      FollowUserTag option, Offset position) async {
+    final overlay =
+        Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+    final local = overlay.globalToLocal(position);
+    final isDefault = controller.defaultFilterId.value == option.id;
+    final selected = await showMenu<bool>(
+      context: context,
+      position: RelativeRect.fromRect(
+          Rect.fromLTWH(local.dx, local.dy, 0, 0), Offset.zero & overlay.size),
+      items: [
+        CheckedPopupMenuItem<bool>(
+          value: true,
+          checked: isDefault,
+          enabled: !isDefault,
+          child: Text(isDefault ? '当前默认显示' : '设为默认显示'),
+        ),
+      ],
+    );
+    if (selected != true || !mounted) return;
+    try {
+      await controller.setDefaultFilter(option);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('默认显示设置失败，请重试')));
+    }
+  }
+
+  bool get _mobile => defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  Future<void> _selectFilter(FollowUserTag option) async {
+    if (!_mobile) {
+      controller.setFilterMode(option);
+      return;
+    }
+    if ((_targetFilter ?? controller.filterMode.value).id == option.id) return;
+    _targetFilter = option;
+    final change = ++_filterChange;
+    try {
+      await _filterFade.animateTo(0,
+          duration: const Duration(milliseconds: 90),
+          curve: Curves.easeOut).orCancel;
+      if (!mounted || change != _filterChange) return;
+      controller.setFilterMode(option);
+      await _filterFade.animateTo(1,
+          duration: const Duration(milliseconds: 130),
+          curve: Curves.easeIn).orCancel;
+      if (mounted && change == _filterChange) _targetFilter = null;
+    } on TickerCanceled {
+      // 新的切换或页面退出会取消旧动画，旧回调不再更新筛选。
+    }
+  }
+
+  Widget _buildFilterContent(BuildContext context, int count) {
+    final list = _buildFollowList(context, count);
+    if (!_mobile) return list;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: (_) => _horizontalDistance = 0,
+      onHorizontalDragUpdate: (details) =>
+          _horizontalDistance += details.primaryDelta ?? 0,
+      onHorizontalDragEnd: (_) {
+        if (_horizontalDistance.abs() < 48) return;
+        final index = controller.tagList.indexWhere((tag) =>
+            tag.id == (_targetFilter ?? controller.filterMode.value).id);
+        if (index < 0 || index > 2) return;
+        final next = index + (_horizontalDistance < 0 ? 1 : -1);
+        if (next >= 0 && next <= 2) _selectFilter(controller.tagList[next]);
+      },
+      child: FadeTransition(opacity: _filterFade, child: list),
+    );
+  }
+
+  @override
+  void dispose() {
+    _navigationWorker?.dispose();
+    _filterFade.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -139,12 +255,25 @@ class FollowUserPage extends GetView<FollowUserController> {
                       child: Wrap(
                           spacing: 12,
                           children: controller.tagList.map((option) {
-                            return FilterButton(
+                            final button = FilterButton(
                               text: option.tag,
                               selected: controller.filterMode.value == option,
                               onTap: () {
-                                controller.setFilterMode(option);
+                                _selectFilter(option);
                               },
+                            );
+                            if (!controller.tagList.take(3).contains(option)) {
+                              return button;
+                            }
+                            return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onSecondaryTapUp: (details) =>
+                                  _showDefaultFilterMenu(
+                                      option, details.globalPosition),
+                              onLongPressStart: (details) =>
+                                  _showDefaultFilterMenu(
+                                      option, details.globalPosition),
+                              child: button,
                             );
                           }).toList()),
                     ),
@@ -154,7 +283,7 @@ class FollowUserPage extends GetView<FollowUserController> {
             ),
           ),
           Expanded(
-            child: _buildFollowList(context, count),
+            child: _buildFilterContent(context, count),
           ),
         ],
       ),
@@ -175,13 +304,9 @@ class FollowUserPage extends GetView<FollowUserController> {
             header: MaterialHeader(
               completeDuration: const Duration(milliseconds: 400),
             ),
-            footer: MaterialFooter(
-              completeDuration: const Duration(milliseconds: 400),
-            ),
             scrollController: controller.scrollController,
             controller: controller.easyRefreshController,
             firstRefresh: true,
-            onLoad: controller.loadData,
             onRefresh: controller.refreshData,
             child: CustomScrollView(
               slivers: [
@@ -224,23 +349,6 @@ class FollowUserPage extends GetView<FollowUserController> {
                     ),
                   ),
               ],
-            ),
-          ),
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Visibility(
-              visible: (Platform.isWindows || Platform.isLinux || Platform.isMacOS) &&
-                  controller.canLoadMore.value &&
-                  !controller.pageLoadding.value &&
-                  !controller.pageEmpty.value,
-              child: Center(
-                child: TextButton(
-                  onPressed: controller.loadData,
-                  child: const Text('加载更多'),
-                ),
-              ),
             ),
           ),
           Offstage(

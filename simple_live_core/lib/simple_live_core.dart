@@ -21,3 +21,7 @@ export 'src/model/live_room_item.dart';
 export 'src/model/live_search_result.dart';
 export 'src/model/live_anchor_item.dart';
 export 'src/model/live_play_url.dart';
+
+export 'src/model/live_emoticon.dart';
+export 'src/danmaku/platform_emoticons.dart';
+export 'src/danmaku/emoticon_seeds.dart';

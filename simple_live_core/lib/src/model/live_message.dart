@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'live_emoticon.dart';
 
 enum LiveMessageType {
   /// 聊天
@@ -24,6 +25,10 @@ class LiveMessage {
   /// 信息
   final String message;
 
+  /// Ordered inline images/text; raw message is retained for filtering/copy.
+  final List<LiveMessagePart> parts;
+  final String? emoticonKey;
+
   /// 数据
   /// 单Type=Online时，Data为人气值(long)
   final dynamic data;
@@ -35,8 +40,10 @@ class LiveMessage {
     required this.userName,
     required this.message,
     this.data,
+    List<LiveMessagePart>? parts,
+    this.emoticonKey,
     required this.color,
-  });
+  }) : parts = List.unmodifiable(parts ?? [LiveMessagePart.text(message)]);
 
   @override
   String toString() {

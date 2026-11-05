@@ -49,6 +49,12 @@ class FollowService extends GetxService {
 
   Timer? updateTimer;
 
+  // A reload invalidates every outstanding response, including reloads without I/O.
+  int _refreshRevision = 0;
+  bool _closed = false;
+  FollowUserTag? _selectedTag;
+  final Map<FollowUser, Object> _statusRequests = Map.identity();
+
   @override
   void onInit() {
     subscription = EventBus.instance.listen(Constant.kUpdateFollow, (p0) {
@@ -91,6 +97,7 @@ class FollowService extends GetxService {
 
   // 根据标签筛选数据
   void filterDataByTag(FollowUserTag tag) {
+    _selectedTag = tag;
     curTagFollowList.clear();
     // 用一个新的列表来存储需要删除的 userId
     List<String> toRemove = [];
@@ -139,15 +146,16 @@ class FollowService extends GetxService {
   }
 
   Future<void> loadData({bool updateStatus = true}) async {
-    var list = DBService.instance.getFollowList();
+    final revision = ++_refreshRevision;
+    updatedCount = 0;
+    updating.value = false;
+    await DBService.instance.normalizeFollowTags();
+    if (_closed || revision != _refreshRevision) return;
+    followList.assignAll(DBService.instance.getFollowList());
     getAllTagList();
-    if (list.isEmpty) {
-      updating.value = false;
-      followList.assignAll(list);
-      return;
-    }
-    followList.assignAll(list);
-    if (updateStatus) {
+    // Empty and cache-only reloads must publish the same coherent snapshot.
+    filterData();
+    if (updateStatus && followList.isNotEmpty) {
       startUpdateStatus();
     }
   }
@@ -155,7 +163,8 @@ class FollowService extends GetxService {
   /// 获取最优并发数
   /// 根据 CPU 核心数和用户设置自动计算
   int getOptimalConcurrency() {
-    var userSetting = AppSettingsController.instance.updateFollowThreadCount.value;
+    var userSetting =
+        AppSettingsController.instance.updateFollowThreadCount.value;
 
     // 如果用户设置为 0，则自动根据 CPU 核心数计算
     if (userSetting == 0) {
@@ -190,79 +199,102 @@ class FollowService extends GetxService {
     return result;
   }
 
-  void startUpdateStatus() async {
+  Future<void> startUpdateStatus() async {
+    final revision = ++_refreshRevision;
     updatedCount = 0;
-    updating.value = true;
+    final items = interleaveByPlatform(followList);
+    updating.value = items.isNotEmpty;
+    if (_closed || items.isEmpty) return;
 
-    var concurrency = getOptimalConcurrency();
-
-    Log.logPrint("开始更新关注状态，并发数: $concurrency，总数: ${followList.length}");
-
-    // 按平台交错排列，避免单一平台阻塞
-    var interleavedList = interleaveByPlatform(followList);
-
-    // 创建任务队列
-    var taskQueue = Queue<FollowUser>.from(interleavedList);
-
-    // 工作函数 - 持续从队列中取任务执行
-    Future<void> worker(int workerId) async {
-      while (taskQueue.isNotEmpty) {
-        var item = taskQueue.removeFirst();
-        await updateLiveStatus(item);
+    final concurrency = getOptimalConcurrency().clamp(1, items.length);
+    Log.logPrint("开始更新关注状态，并发数: $concurrency，总数: ${items.length}");
+    final taskQueue = Queue<FollowUser>.from(items);
+    Future<void> worker() async {
+      while (!_closed && revision == _refreshRevision && taskQueue.isNotEmpty) {
+        final item = taskQueue.removeFirst();
+        await _updateLiveStatus(item, revision, requireListed: true);
+        if (_closed || revision != _refreshRevision) return;
+        updatedCount++;
+        if (updatedCount == items.length) filterData();
       }
     }
 
-    // 启动固定数量的并发 worker
-    var workers = <Future>[];
-    for (var i = 0; i < concurrency; i++) {
-      workers.add(worker(i));
+    await Future.wait(List.generate(concurrency, (_) => worker()));
+    if (!_closed && revision == _refreshRevision) {
+      updating.value = false;
+      Log.logPrint("关注状态更新完成");
     }
-
-    await Future.wait(workers);
-
-    Log.logPrint("关注状态更新完成");
   }
 
-  Future updateLiveStatus(FollowUser item) async {
+  Future<void> updateLiveStatus(FollowUser item) =>
+      _updateLiveStatus(item, _refreshRevision);
+
+  Future<void> _updateLiveStatus(FollowUser item, int revision,
+      {bool requireListed = false}) async {
+    final request = Object();
+    _statusRequests[item] = request;
+    final database = DBService.instance;
+    final storedItem = database.followBox.get(item.id);
+    // Compare the captured database identity as well as the round. Remove/re-add
+    // of the same ID must never revive or overwrite the previous object.
+    bool isCurrent() =>
+        !_closed &&
+        revision == _refreshRevision &&
+        identical(_statusRequests[item], request) &&
+        storedItem != null &&
+        database.followBox.isOpen &&
+        identical(database.followBox.get(item.id), storedItem) &&
+        (!requireListed || followList.any((entry) => identical(entry, item)));
+
     try {
-      var site = Sites.allSites[item.siteId]!;
-      // 抖音状态接口本身会获取详情，复用该详情中的网页叶子分区。
+      final site = Sites.allSites[item.siteId]!;
       final douyinDetail = site.liveSite is DouyinSite
           ? await site.liveSite.getRoomDetail(roomId: item.roomId)
           : null;
-      var isLiving = douyinDetail?.status ??
+      final isLiving = douyinDetail?.status ??
           await site.liveSite.getLiveStatus(roomId: item.roomId);
-      item.liveStatus.value = isLiving ? 2 : 1;
-      if (item.liveStatus.value == 2) {
-        // 复用抖音已有详情；其他平台仍仅在开播时查询详情。
-        var detail = douyinDetail ??
+      if (!isCurrent()) return;
+
+      String? liveStartTime;
+      int? heat;
+      String? categoryName;
+      if (isLiving) {
+        final detail = douyinDetail ??
             await site.liveSite.getRoomDetail(roomId: item.roomId);
-        item.liveStartTime = detail.showTime;
-        item.heat = detail.online > 0 ? detail.online : null;
-        final categoryName = (site.liveSite is DouyinSite
-                ? await (site.liveSite as DouyinSite).getFollowCategoryName(detail)
-                : detail.categoryName)?.trim();
-        if (categoryName != null &&
-            categoryName.isNotEmpty &&
-            categoryName != item.categoryName &&
-            identical(DBService.instance.followBox.get(item.id), item)) {
-          item.categoryName = categoryName;
+        liveStartTime = detail.showTime;
+        heat = detail.online > 0 ? detail.online : null;
+        categoryName = (site.liveSite is DouyinSite
+                ? await (site.liveSite as DouyinSite)
+                    .getFollowCategoryName(detail)
+                : detail.categoryName)
+            ?.trim();
+      }
+      // All network-derived values stay local until every await has finished.
+      if (!isCurrent()) return;
+      final categoryChanged = categoryName != null &&
+          categoryName.isNotEmpty &&
+          categoryName != item.categoryName;
+      item.liveStartTime = liveStartTime;
+      item.heat = heat;
+      if (categoryChanged) {
+        item.categoryName = categoryName;
+        if (identical(storedItem, item)) {
           await DBService.instance.addFollow(item);
         }
-      } else {
-        item.liveStartTime = null;
-        item.heat = null;
       }
+      if (!isCurrent()) return;
+      item.liveStatus.value = isLiving ? 2 : 1;
+      filterData();
     } catch (e) {
       Log.logPrint(e);
+      if (!isCurrent()) return;
       item.liveStatus.value = 0;
       item.liveStartTime = null;
       item.heat = null;
+      filterData();
     } finally {
-      updatedCount++;
-      if (updatedCount >= followList.length) {
-        filterData();
-        updating.value = false;
+      if (identical(_statusRequests[item], request)) {
+        _statusRequests.remove(item);
       }
     }
   }
@@ -271,7 +303,19 @@ class FollowService extends GetxService {
     followList.sort((a, b) => b.liveStatus.value.compareTo(a.liveStatus.value));
     liveList.assignAll(followList.where((x) => x.liveStatus.value == 2));
     notLiveList.assignAll(followList.where((x) => x.liveStatus.value == 1));
-    _updatedListController.add(0);
+    final selectedTag = _selectedTag;
+    if (selectedTag != null) {
+      final currentTag =
+          followTagList.firstWhereOrNull((tag) => tag.id == selectedTag.id);
+      if (currentTag == null) {
+        curTagFollowList.clear();
+      } else {
+        filterDataByTag(currentTag);
+      }
+    } else {
+      curTagFollowList.clear();
+    }
+    if (!_closed) _updatedListController.add(0);
   }
 
   void exportFile() async {
@@ -457,6 +501,9 @@ class FollowService extends GetxService {
 
   @override
   void onClose() {
+    _closed = true;
+    _refreshRevision++;
+    _statusRequests.clear();
     updateTimer?.cancel();
     subscription?.cancel();
     super.onClose();

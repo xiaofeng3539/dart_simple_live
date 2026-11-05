@@ -44,6 +44,8 @@ class _Room extends LiveRoomController {
 }
 
 class _Huya extends HuyaSite {
+  @override
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async => _liveDetail();
   int calls = 0;
   @override
   Future<LivePlayUrl> getPlayUrls(
@@ -58,6 +60,8 @@ class _Huya extends HuyaSite {
 }
 
 class _FlakyHuya extends HuyaSite {
+  @override
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async => _liveDetail();
   int calls = 0;
   @override
   Future<LivePlayUrl> getPlayUrls(
@@ -70,6 +74,8 @@ class _FlakyHuya extends HuyaSite {
 }
 
 class _Bili extends BiliBiliSite {
+  @override
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async => _liveDetail();
   int calls = 0;
   @override
   Future<LivePlayUrl> getPlayUrls(
@@ -82,6 +88,9 @@ class _Bili extends BiliBiliSite {
     ]);
   }
 }
+
+LiveRoomDetail _liveDetail() => LiveRoomDetail(roomId: '1', title: '', cover: '',
+    userName: '', userAvatar: '', online: 0, status: true, url: '');
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

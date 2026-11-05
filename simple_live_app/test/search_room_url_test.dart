@@ -3,6 +3,45 @@ import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/modules/search/search_room_url.dart';
 
 void main() {
+  test('手机网页重定向后的房间地址仍可识别', () {
+    const cases = [
+      (
+        Constant.kBiliBili,
+        'https://live.bilibili.com/h5/12345?broadcast_type=0',
+        '12345'
+      ),
+      (Constant.kBiliBili, 'https://m.bilibili.com/live/12345', '12345'),
+      (Constant.kHuya, 'https://m.huya.com/my_room-1?from=search', 'my_room-1'),
+      (Constant.kDouyu, 'https://m.douyu.com/98765?from=search', '98765'),
+      (
+        Constant.kDouyin,
+        'https://www.douyin.com/root/live/921169302662',
+        '921169302662'
+      ),
+    ];
+    for (final (site, url, id) in cases) {
+      expect(SearchRoomUrl.roomIdFor(site, Uri.parse(url)), id, reason: url);
+    }
+  });
+
+  test('移动搜索、分类、用户页和伪装域名不识别为房间', () {
+    const cases = [
+      (Constant.kBiliBili, 'https://m.bilibili.com/video/123'),
+      (Constant.kBiliBili, 'https://live.bilibili.com/h5/'),
+      (Constant.kHuya, 'https://m.huya.com/search'),
+      (Constant.kHuya, 'https://m.huya.com/g/1'),
+      (Constant.kDouyu, 'https://m.douyu.com/search'),
+      (Constant.kDouyu, 'https://m.douyu.com/directory'),
+      (Constant.kDouyin, 'https://www.douyin.com/user/123'),
+      (Constant.kHuya, 'https://m.huya.com.evil.test/123'),
+      (Constant.kDouyu, 'https://evil.test/123?url=https://m.douyu.com/123'),
+    ];
+    for (final (site, url) in cases) {
+      expect(SearchRoomUrl.roomIdFor(site, Uri.parse(url)), isNull,
+          reason: url);
+    }
+  });
+
   test('每个平台打开对应的直播网站首页', () {
     expect(
         SearchRoomUrl.homeUriFor(Constant.kBiliBili).host, 'live.bilibili.com');

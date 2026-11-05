@@ -41,6 +41,7 @@ list(APPEND PLUGIN_SOURCES
   "flutter_inappwebview_windows_plugin.cpp"
   "flutter_inappwebview_windows_plugin.h"
   "utils/log.h"
+  "utils/com_apartment.h"
   "utils/strconv.h"
   "utils/map.h"
   "utils/vector.h"
@@ -188,6 +189,10 @@ function(FLUTTER_INAPPWEBVIEW_WINDOWS_APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_17)
   target_compile_options(${TARGET} PRIVATE /W4 /wd"4100")
   target_compile_options(${TARGET} PRIVATE /EHsc)
+  # The pinned WIL version still includes experimental/coroutine. VS 2026
+  # requires explicit opt-in until WIL is migrated to the C++20 implementation.
+  target_compile_definitions(${TARGET} PRIVATE _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+  target_compile_options(${TARGET} PRIVATE /utf-8)
   target_compile_definitions(${TARGET} PRIVATE "_HAS_EXCEPTIONS=0")
   target_compile_definitions(${TARGET} PRIVATE "$<$<CONFIG:Debug>:_DEBUG>")
 endfunction()

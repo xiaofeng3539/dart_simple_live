@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'emoticon_parser.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -198,6 +199,7 @@ class BiliBiliDanmaku implements LiveDanmaku {
               type: LiveMessageType.chat,
               userName: username,
               message: message,
+              parts: EmoticonParser.bilibili(obj['info'], message),
               color: color == 0
                   ? LiveMessageColor.white
                   : LiveMessageColor.numberToColor(color),
