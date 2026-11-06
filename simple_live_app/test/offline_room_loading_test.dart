@@ -283,8 +283,14 @@ void main() {
       // 开播瞬间不出现任何加载符号
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(find.text('缓冲中'), findsNothing);
-      // 持续缓冲超过阈值才给一行文字
-      await tester.pump(const Duration(milliseconds: 1500));
+      // 起播前即使持续缓冲也不提示，避免每次进房闪一下
+      await tester.pump(const Duration(milliseconds: 2500));
+      expect(find.text('缓冲中'), findsNothing);
+      // 出过画面后再持续缓冲才提示
+      room.hasPlayed.value = true;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 2100));
+      await tester.pump();
       expect(find.text('缓冲中'), findsOneWidget);
       room.roomOffline.value = true;
       await tester.pump();

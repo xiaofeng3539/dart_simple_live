@@ -678,6 +678,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         // 线路由房间控制器管理，避免播放器自动推进与错误恢复同时切换。
         await configurePlaybackProxy(mediaList[lineIndex].uri);
         if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
+        hasPlayed.value = false;
         await player.open(mediaList[lineIndex]);
         _markOpen('起播');
         _logOpenDuration();
@@ -712,6 +713,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         }
         await configurePlaybackProxy(url);
         if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
+        hasPlayed.value = false;
         await player.open(Media(url, httpHeaders: headers));
       } catch (e) {
         if (!_isCurrentRequest(request)) return;
@@ -767,11 +769,23 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   Future<void> _recoverPlayback({String? error}) async {
     final request = _playRequest;
     if (_recoveringPlayback || !_isCurrentRequest(request) || playUrls.isEmpty) return;
+    final originalLine = currentLineIndex;
+    final position = player.state.position;
+    bool stillStalled() {
+      if (!_isCurrentRequest(request) || isBackground ||
+          currentLineIndex != originalLine) {
+        return false;
+      }
+      final state = player.state;
+      return state.position <= position &&
+          !(state.playing && !state.buffering && !state.completed);
+    }
     _recoveringPlayback = true;
     _bufferingTimer?.cancel();
     try {
       if (await _confirmRoomOffline(request)) return;
-      if (!_isCurrentRequest(request) || isBackground) return;
+      // 网络核验期间可能已经自然恢复或被手动切线，不再打断新连接。
+      if (!stillStalled()) return;
       if ((site.id == Constant.kHuya || site.id == Constant.kBiliBili) &&
           detail.value != null &&
           currentQuality >= 0 && currentQuality < qualites.length) {
@@ -779,8 +793,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         final oldUri = Uri.tryParse(playUrls[line]);
         try {
           final fresh = await site.liveSite.getPlayUrls(
-              detail: detail.value!, quality: qualites[currentQuality]);
-          if (!_isCurrentRequest(request) || currentLineIndex != line) return;
+              detail: detail.value!, quality: qualites[currentQuality])
+              .timeout(const Duration(seconds: 4));
+          if (!stillStalled()) return;
           if (fresh.urls.isNotEmpty) {
             final sameLine = fresh.urls.indexWhere((url) {
               final uri = Uri.tryParse(url);
@@ -792,6 +807,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
           }
         } catch (e) {
           Log.d('${site.name}重新获取播放地址失败：${e.runtimeType}');
+          if (!stillStalled()) return;
         }
         if (!_isCurrentRequest(request) || isBackground) return;
       }
@@ -811,6 +827,12 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       }
     } finally {
       _recoveringPlayback = false;
+      // 核验期间进度恢复但仍处于缓冲时，继续观察，不能丢失看门狗。
+      if (_isCurrentRequest(request) && !isBackground &&
+          currentLineIndex == originalLine && player.state.buffering &&
+          player.state.position > position) {
+        mediaBuffering(true);
+      }
     }
   }
 
@@ -826,7 +848,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     final request = _playRequest;
     final line = currentLineIndex;
     final position = player.state.position;
-    _bufferingTimer = Timer(const Duration(seconds: 15), () {
+    // 首次起播保留宽限；播放中卡死更快换线，短暂抖动仍交给 mpv 缓存。
+    final timeout = Duration(seconds: hasPlayed.value ? 8 : 15);
+    _bufferingTimer = Timer(timeout, () {
       _bufferingTimer = null;
       if (!_isCurrentRequest(request) || currentLineIndex != line ||
           isBackground || !liveStatus.value ||

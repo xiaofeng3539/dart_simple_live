@@ -32,6 +32,7 @@ mixin PlayerMixin {
   late final player = Player(
     configuration: PlayerConfiguration(
       title: "Simple Live Player",
+      bufferSize: 64 * 1024 * 1024,
       logLevel: AppSettingsController.instance.logEnable.value
           ? MPVLogLevel.info
           : MPVLogLevel.error,
@@ -59,16 +60,15 @@ mixin PlayerMixin {
 
   Future<void> _configurePlayer() async {
     var pp = player.platform as NativePlayer;
-    // 直播使用内存缓冲，短暂抖动后补足缓存再恢复，避免反复转圈。
-    // 这些参数互不依赖，并发下发，省掉串行 IPC 的等待。
-    await Future.wait([
-      pp.setProperty('cache-on-disk', 'no'),
-      pp.setProperty('cache-secs', '8'),
-      pp.setProperty('cache-pause', 'yes'),
-      pp.setProperty('cache-pause-wait', '2'),
-      pp.setProperty('demuxer-max-back-bytes', '4194304'),
-      pp.setProperty('network-timeout', '10'),
-    ]);
+    // 直播使用有上限的内存缓存。cache-secs 是预读上限，不是起播等待时间。
+    await pp.setProperty('cache-on-disk', 'no');
+    await pp.setProperty('cache-secs', '20');
+    await pp.setProperty('demuxer-max-back-bytes', '4194304');
+    await pp.setProperty('cache-pause', 'yes');
+    await pp.setProperty('cache-pause-wait', '2');
+    // 起播先积累少量数据，避免刚出画面就因缓存耗尽而停顿。
+    await pp.setProperty('cache-pause-initial', 'yes');
+    await pp.setProperty('network-timeout', '10');
     // 设置音频输出驱动
     if (AppSettingsController.instance.customPlayerOutput.value) {
       if (player.platform is NativePlayer) {
@@ -157,6 +157,10 @@ mixin PlayerStateMixin on PlayerMixin {
 
   /// 是否为竖屏直播间
   var isVertical = false.obs;
+
+  /// 当前这条流是否已有播放进度（不是 playing 请求标志，也不代表视频首帧）。
+  /// 起播阶段的缓冲属于正常等待，不该提示“缓冲中”。
+  var hasPlayed = false.obs;
 
   Widget? danmakuView;
 
@@ -797,6 +801,7 @@ class PlayerController extends BaseController
   StreamSubscription? _heightSubscription;
   StreamSubscription? _logSubscription;
   StreamSubscription? _playingSubscription;
+  StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
 
   void initStream() {
@@ -817,6 +822,10 @@ class PlayerController extends BaseController
         WakelockPlus.enable();
         Log.d("Playing");
       }
+    });
+
+    _positionSubscription = player.stream.position.listen((position) {
+      if (position > Duration.zero) hasPlayed.value = true;
     });
 
     _completedSubscription = player.stream.completed.listen((event) {
@@ -850,6 +859,7 @@ class PlayerController extends BaseController
     _logSubscription?.cancel();
     _pipSubscription?.cancel();
     _playingSubscription?.cancel();
+    _positionSubscription?.cancel();
   }
 
   void mediaEnd() {

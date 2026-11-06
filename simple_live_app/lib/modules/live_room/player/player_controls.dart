@@ -32,7 +32,7 @@ class PlayerBufferingHint extends StatefulWidget {
     super.key,
     required this.buffering,
     required this.visible,
-    this.delay = const Duration(milliseconds: 1200),
+    this.delay = const Duration(milliseconds: 2000),
   });
 
   /// 播放器是否处于缓冲状态
@@ -231,7 +231,7 @@ Widget buildFullControls(
             builder: (_, s) => Obx(
               () => PlayerBufferingHint(
                 buffering: s.data ?? false,
-                visible: !controller.roomOffline.value,
+                visible: controller.hasPlayed.value && !controller.roomOffline.value,
               ),
             ),
           ),
@@ -623,7 +623,7 @@ Widget buildControls(
           builder: (_, s) => Obx(
             () => PlayerBufferingHint(
               buffering: s.data ?? false,
-              visible: !controller.roomOffline.value,
+              visible: controller.hasPlayed.value && !controller.roomOffline.value,
             ),
           ),
         ),
