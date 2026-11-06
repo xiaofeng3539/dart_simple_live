@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:simple_live_app/services/window_appearance_controller.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -132,6 +133,7 @@ Future initServices() async {
   await Get.put(DBService()).init();
   //初始化设置控制器
   Get.put(AppSettingsController());
+  await Get.put(WindowAppearanceController()).initialize();
 
   Get.put(BiliBiliAccountService());
 
@@ -176,7 +178,7 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   static const _windowChannel = MethodChannel('simple_live/window');
   final _keyboardFocusNode = FocusNode();
   bool _handlingClose = false;
@@ -203,18 +205,28 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (Platform.isWindows) {
       _windowChannel.setMethodCallHandler((call) async {
         if (call.method == 'onCloseRequest') await _handleCloseRequest();
+        if (call.method == 'onAppearanceChanged') {
+          await Get.find<WindowAppearanceController>().apply();
+        }
       });
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (Platform.isWindows) _windowChannel.setMethodCallHandler(null);
     _keyboardFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    if (Platform.isWindows) Get.find<WindowAppearanceController>().apply();
   }
 
   Future<void> _handleCloseRequest() async {
@@ -340,8 +352,10 @@ class _MyAppState extends State<MyApp> {
       }
       return GetMaterialApp(
         title: "Simple Live",
-        theme: AppStyle.lightTheme.copyWith(colorScheme: lightColorScheme),
-        darkTheme: AppStyle.darkTheme.copyWith(colorScheme: darkColorScheme),
+        theme: Get.find<WindowAppearanceController>().theme(
+            AppStyle.lightTheme.copyWith(colorScheme: lightColorScheme)),
+        darkTheme: Get.find<WindowAppearanceController>().theme(
+            AppStyle.darkTheme.copyWith(colorScheme: darkColorScheme)),
         themeMode:
             ThemeMode.values[Get.find<AppSettingsController>().themeMode.value],
         initialRoute: RoutePath.kIndex,
@@ -385,7 +399,7 @@ class _MyAppState extends State<MyApp> {
                 : mediaQueryData.copyWith(
                     textScaler: const TextScaler.linear(1.0));
 
-            return MediaQuery(
+            final content = MediaQuery(
               data: fixedMediaQueryData,
               child: Stack(
                 children: [
@@ -439,6 +453,11 @@ class _MyAppState extends State<MyApp> {
                   ),
                 ],
               ),
+            );
+            // One tint layer only: nested transparent Scaffolds must not accumulate opacity.
+            return ColoredBox(
+              color: Get.find<WindowAppearanceController>().tint(Theme.of(context)),
+              child: content,
             );
           },
         ),

@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <shellapi.h>
+#include <dwmapi.h>
 
 #include "flutter/generated_plugin_registrant.h"
 #include <flutter/standard_method_codec.h>
@@ -47,6 +48,56 @@ bool FlutterWindow::OnCreate() {
           result->Success();
         } else if (call.method_name() == "exitApp") {
           PostMessageW(GetHandle(), kExitMessage, 0, 0);
+          result->Success();
+        } else if (call.method_name() == "appearanceCapabilities") {
+          // RtlGetVersion is not affected by the application's compatibility manifest.
+          OSVERSIONINFOW version{};
+          version.dwOSVersionInfoSize = sizeof(version);
+          using GetVersion = LONG(WINAPI*)(OSVERSIONINFOW*);
+          auto get_version = reinterpret_cast<GetVersion>(
+              GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+          if (get_version) get_version(&version);
+          DWORD transparency = 1, bytes = sizeof(transparency);
+          RegGetValueW(HKEY_CURRENT_USER,
+              L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+              L"EnableTransparency", RRF_RT_REG_DWORD, nullptr, &transparency, &bytes);
+          HIGHCONTRASTW contrast{};
+          contrast.cbSize = sizeof(contrast);
+          SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0);
+          BOOL composition = FALSE;
+          DwmIsCompositionEnabled(&composition);
+          result->Success(flutter::EncodableMap{
+              {flutter::EncodableValue("build"), flutter::EncodableValue(
+                  static_cast<int32_t>(version.dwBuildNumber))},
+              {flutter::EncodableValue("transparency"), flutter::EncodableValue(
+                  transparency != 0 && composition && !(contrast.dwFlags & HCF_HIGHCONTRASTON))}});
+        } else if (call.method_name() == "appearanceBorder") {
+          const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+          if (!args) {
+            result->Error("arguments", "Expected appearance options");
+            return;
+          }
+          auto flag = [&](const char* key) {
+            auto value = args->find(flutter::EncodableValue(key));
+            return value != args->end() && std::get_if<bool>(&value->second) &&
+                   std::get<bool>(value->second);
+          };
+          // These DWM attributes safely return unsupported on older Windows.
+          const COLORREF border = flag("enabled") ? 0xFFFFFFFF : 0xFFFFFFFE;
+          DwmSetWindowAttribute(GetHandle(), 34, &border, sizeof(border));
+          const BOOL dark = flag("dark");
+          DwmSetWindowAttribute(GetHandle(), 20, &dark, sizeof(dark));
+          const int round = 2;
+          DwmSetWindowAttribute(GetHandle(), 33, &round, sizeof(round));
+          if (flag("solid")) {
+            // flutter_acrylic 1.1.4 does not clear SYSTEMBACKDROP_TYPE on solid.
+            const int none = 1;
+            const BOOL off = FALSE;
+            const COLORREF default_color = 0xFFFFFFFF;
+            DwmSetWindowAttribute(GetHandle(), 38, &none, sizeof(none));
+            DwmSetWindowAttribute(GetHandle(), 1029, &off, sizeof(off));
+            DwmSetWindowAttribute(GetHandle(), 35, &default_color, sizeof(default_color));
+          }
           result->Success();
         } else {
           result->NotImplemented();
@@ -118,6 +169,9 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if ((message == WM_SETTINGCHANGE || message == WM_THEMECHANGED) && window_channel_) {
+    window_channel_->InvokeMethod("onAppearanceChanged", nullptr);
+  }
   if (message == WM_NCCALCSIZE && wparam && ::IsZoomed(hwnd)) {
     const LONG_PTR style = ::GetWindowLongPtr(hwnd, GWL_STYLE);
     auto* size = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);

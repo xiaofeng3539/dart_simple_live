@@ -1,5 +1,5 @@
 name: simple_live_app
-version: 2.0.10+24010
+version: 2.0.11+24011
 publish_to: none
 description: "Simple Live APP"
 environment:
@@ -81,6 +81,7 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  flutter_acrylic: 1.1.4
 
 
 dev_dependencies:

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:simple_live_app/services/window_appearance_controller.dart';
 
 import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/log.dart';
@@ -238,6 +239,9 @@ class AppSettingsController extends GetxController {
 
     LocalStorageService.instance.setValue(LocalStorageService.kThemeMode, i);
     Get.changeThemeMode(mode);
+    if (Get.isRegistered<WindowAppearanceController>()) {
+      Get.find<WindowAppearanceController>().apply();
+    }
   }
 
   var hardwareDecode = true.obs;
