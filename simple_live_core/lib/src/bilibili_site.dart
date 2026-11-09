@@ -1,3 +1,4 @@
+import 'common/request_pool.dart';
 import 'dart:convert';
 import 'model/room_category_name.dart';
 
@@ -154,7 +155,17 @@ class BiliBiliSite implements LiveSite {
   Future<LivePlayUrl> getPlayUrls({
     required LiveRoomDetail detail,
     required LivePlayQuality quality,
-  }) async {
+  }) => _playUrlRequests.run(
+    jsonEncode([detail.roomId, quality.data]),
+    () => _loadPlayUrls(detail, quality),
+  );
+
+  final _playUrlRequests = InFlightRequests<LivePlayUrl>();
+
+  Future<LivePlayUrl> _loadPlayUrls(
+    LiveRoomDetail detail,
+    LivePlayQuality quality,
+  ) async {
     final cached = _takeCachedPlayUrl(detail.roomId, quality.data);
     if (cached != null) return cached;
     var result = await _fetchPlayInfo(detail.roomId, qn: quality.data);
@@ -163,33 +174,16 @@ class BiliBiliSite implements LiveSite {
     );
   }
 
-  final _playInfoPrefetch = <String, Future<dynamic>>{};
+  final _playInfoPrefetch = PrefetchRequests<dynamic>();
 
   /// 清晰度接口只认 roomId，可以在等房间详情的同时先发出去。
   @override
   void prefetchRoom(String roomId) {
-    if (_playInfoPrefetch.containsKey(roomId)) return;
-    if (_playInfoPrefetch.length >= 8) {
-      _playInfoPrefetch.remove(_playInfoPrefetch.keys.first);
-    }
-    final request = _fetchPlayInfo(roomId);
-    _playInfoPrefetch[roomId] = request;
-    // 预热结果没人消费时，失败不能变成未捕获异常。
-    request.catchError((Object _) => null);
+    _playInfoPrefetch.prefetch(roomId, () => _fetchPlayInfo(roomId));
   }
 
-  /// 用预取响应，没有预热或预热失败就正常发一次。
-  Future<dynamic> _takePlayInfo(String roomId) async {
-    final prefetched = _playInfoPrefetch.remove(roomId);
-    if (prefetched != null) {
-      try {
-        return await prefetched;
-      } catch (_) {
-        // 预热失败不影响主流程，下面重新请求。
-      }
-    }
-    return _fetchPlayInfo(roomId);
-  }
+  Future<dynamic> _takePlayInfo(String roomId) =>
+      _playInfoPrefetch.take(roomId, () => _fetchPlayInfo(roomId));
 
   Future<dynamic> _fetchPlayInfo(String roomId, {Object? qn}) async {
     return HttpClient.instance.getJson(
@@ -272,6 +266,7 @@ class BiliBiliSite implements LiveSite {
       return null;
     }
     if (int.tryParse("$qualityData") != cached.$1) return null;
+    _cachedPlayUrls.remove(roomId);
     return cached.$2;
   }
 
@@ -305,7 +300,12 @@ class BiliBiliSite implements LiveSite {
   }
 
   @override
-  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) =>
+      _roomRequests.run(roomId, () => _loadRoomDetail(roomId));
+
+  final _roomRequests = InFlightRequests<LiveRoomDetail>();
+
+  Future<LiveRoomDetail> _loadRoomDetail(String roomId) async {
     var roomInfo = await getRoomInfo(roomId: roomId);
     var realRoomId = roomInfo["room_info"]["room_id"].toString();
     final status = int.tryParse(

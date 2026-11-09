@@ -91,6 +91,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   var countdown = 60.obs;
 
   Timer? autoExitTimer;
+  Timer? _autoExitFallbackTimer;
 
   /// 设置的自动关闭时间（分钟）
   var autoExitMinutes = 60.obs;
@@ -122,10 +123,13 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   int _roomRequest = 0;
   int _playRequest = 0;
   Future<void> _playerOperation = Future<void>.value();
+  (int, int, String, Map<String, String>?)? _pendingLineOpen;
+  Future<void>? _pendingLineOpenFuture;
   Timer? _bufferingTimer;
   Timer? _playbackFailureTimer;
   bool _recoveringPlayback = false;
   bool _roomClosed = false;
+  bool similarGameRoomsOpen = false;
   Future<bool>? _offlineCheck;
   Future<int>? _qualityLevelFuture;
   final _openWatch = Stopwatch();
@@ -209,7 +213,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     _playbackFailureTimer = null;
     _liveDurationTimer?.cancel();
     liveDuration.value = '00:00:00';
-    liveDanmaku.stop();
+    _stopDanmaku();
     addSysMsg('主播已下播，已停止加载和自动重试');
     SmartDialog.dismiss(status: SmartStatus.loading);
     // Show offline immediately. A previous native open/stop may still be pending;
@@ -263,6 +267,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   void setAutoExit() {
+    _autoExitFallbackTimer?.cancel();
+    if (_roomClosed) return;
     if (!autoExitEnable.value) {
       autoExitTimer?.cancel();
       return;
@@ -272,15 +278,20 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     autoExitTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       countdown.value -= 1;
       if (countdown.value <= 0) {
-        timer = Timer(const Duration(seconds: 10), () async {
+        timer.cancel();
+        _autoExitFallbackTimer = Timer(const Duration(seconds: 10), () async {
+          if (_roomClosed || !autoExitEnable.value) return;
           await WakelockPlus.disable();
+          if (_roomClosed || !autoExitEnable.value) return;
           exit(0);
         });
         autoExitTimer?.cancel();
         var delay = await Utils.showAlertDialog("定时关闭已到时,是否延迟关闭?",
             title: "延迟关闭", confirm: "延迟", cancel: "关闭", selectable: true);
+        if (_roomClosed) return;
+        _autoExitFallbackTimer?.cancel();
+        _autoExitFallbackTimer = null;
         if (delay) {
-          timer.cancel();
           delayAutoExit.value = true;
           showAutoExitSheet();
           setAutoExit();
@@ -297,8 +308,6 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   void refreshRoom() {
     //messages.clear();
     superChats.clear();
-    liveDanmaku.stop();
-
     loadData();
   }
 
@@ -331,17 +340,39 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       if (!_roomClosed && identical(_emoticons,resolver)) messages.refresh();
     });
     unawaited(resolver.load());
-    liveDanmaku.onMessage = onWSMessage;
-    liveDanmaku.onClose = onWSClose;
-    liveDanmaku.onReady = onWSReady;
+    final request = _roomRequest;
+    final source = liveDanmaku;
+    bool current() => _isCurrentRoomRequest(request) &&
+        identical(source, liveDanmaku) && !roomOffline.value;
+    source.onMessage = (message) { if (current()) onWSMessage(message); };
+    source.onClose = (message) { if (current()) onWSClose(message); };
+    source.onReady = () { if (current()) onWSReady(); };
+  }
+
+  void _stopDanmaku() {
+    // Detach first: socket.close may emit callbacks after the next room starts.
+    liveDanmaku.onMessage = null;
+    liveDanmaku.onClose = null;
+    liveDanmaku.onReady = null;
+    unawaited(liveDanmaku.stop().catchError((Object error) {
+      Log.d('关闭弹幕连接失败：${error.runtimeType}');
+    }));
+  }
+
+  void _appendChatMessage(LiveMessage message) {
+    if (_roomClosed) return;
+    // Reading older history must not turn an active room into an unbounded log.
+    final limit = disableAutoScroll.value ? 1000 : 200;
+    if (messages.length >= limit) {
+      messages.removeRange(0, messages.length - limit + 1);
+    }
+    messages.add(message);
   }
 
   /// 接收到WebSocket信息
   void onWSMessage(LiveMessage msg) {
+    if (_roomClosed) return;
     if (msg.type == LiveMessageType.chat) {
-      if (messages.length > 200 && !disableAutoScroll.value) {
-        messages.removeAt(0);
-      }
 
       // 关键词屏蔽检查
       for (var keyword in AppSettingsController.instance.shieldList) {
@@ -363,7 +394,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         }
       }
 
-      messages.add(msg);
+      _appendChatMessage(msg);
 
       // 同一帧消息合并滚动，避免每条消息重复提交布局后的滚动操作。
       if (!_chatScrollScheduled && !disableAutoScroll.value) {
@@ -411,7 +442,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   /// 添加一条系统消息
   void addSysMsg(String msg) {
-    messages.add(
+    _appendChatMessage(
       LiveMessage(
         type: LiveMessageType.chat,
         userName: "LiveSysMessage",
@@ -439,6 +470,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     _playbackFailureTimer?.cancel();
     final request = ++_roomRequest;
     final playRequest = ++_playRequest;
+    _stopDanmaku();
+    liveDanmaku = site.liveSite.getDanmaku();
     _openWatch
       ..reset()
       ..start();
@@ -639,10 +672,14 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       currentLineIndex = 0;
       currentLineInfo.value = "线路1";
       mediaErrorRetryCount = 0;
+      errorMsg.value = '';
       initPlaylist(currentRequest);
     } catch (e) {
       if (!_isCurrentRequest(currentRequest)) return;
       Log.logPrint(e);
+      if (site.id == Constant.kHuya && e is StateError) {
+        errorMsg.value = e.message.toString();
+      }
       SmartDialog.showToast("无法读取播放地址");
     }
   }
@@ -657,41 +694,12 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     setPlayer();
   }
 
-  void initPlaylist(int request) async {
-    currentLineInfo.value = "线路${currentLineIndex + 1}";
-    errorMsg.value = "";
-
-    final mediaList = playUrls.map((url) {
-      var finalUrl = url;
-      if (AppSettingsController.instance.playerForceHttps.value) {
-        finalUrl = finalUrl.replaceAll("http://", "https://");
-      }
-      return Media(finalUrl, httpHeaders: playHeaders);
-    }).toList();
-    final lineIndex = currentLineIndex;
-
-    _playerOperation = _playerOperation.then((_) async {
-      if (!_isCurrentRequest(request)) return;
-      try {
-        await initializePlayer();
-        if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
-        // 线路由房间控制器管理，避免播放器自动推进与错误恢复同时切换。
-        await configurePlaybackProxy(mediaList[lineIndex].uri);
-        if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
-        hasPlayed.value = false;
-        await player.open(mediaList[lineIndex]);
-        _markOpen('起播');
-        _logOpenDuration();
-      } catch (e) {
-        if (!_isCurrentRequest(request)) return;
-        if (await _confirmRoomOffline(request)) return;
-        if (!_isCurrentRequest(request)) return;
-        Log.logPrint(e);
-        errorMsg.value = "播放失败";
-      }
-    });
+  void initPlaylist(int request) {
+    if (!_isCurrentRequest(request)) return;
+    // Initial play and manual/recovery actions must share the same pending key.
+    // Otherwise an action during startup can queue a second open after first frame.
+    unawaited(setPlayer());
   }
-
   Future<void> setPlayer() async {
     if (roomOffline.value) return;
     if (currentLineIndex < 0 || currentLineIndex >= playUrls.length) return;
@@ -704,9 +712,16 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     final lineIndex = currentLineIndex;
     final mediaUrl = playUrls[lineIndex];
     final headers = playHeaders;
-    _playerOperation = _playerOperation.then((_) async {
+    final key = (request, lineIndex, mediaUrl, headers);
+    if (_pendingLineOpen == key && _pendingLineOpenFuture != null) {
+      await _pendingLineOpenFuture;
+      return;
+    }
+    final operation = _playerOperation.then((_) async {
       if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
       try {
+        await initializePlayer();
+        if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
         var url = mediaUrl;
         if (AppSettingsController.instance.playerForceHttps.value) {
           url = url.replaceAll('http://', 'https://');
@@ -714,6 +729,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         await configurePlaybackProxy(url);
         if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
         hasPlayed.value = false;
+        _markOpen('提交开流');
         await player.open(Media(url, httpHeaders: headers));
       } catch (e) {
         if (!_isCurrentRequest(request)) return;
@@ -723,7 +739,17 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         errorMsg.value = "播放失败";
       }
     });
-    await _playerOperation;
+    _playerOperation = operation;
+    _pendingLineOpen = key;
+    _pendingLineOpenFuture = operation;
+    try {
+      await operation;
+    } finally {
+      if (identical(_pendingLineOpenFuture, operation)) {
+        _pendingLineOpen = null;
+        _pendingLineOpenFuture = null;
+      }
+    }
   }
 
   @override
@@ -833,6 +859,16 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
           player.state.position > position) {
         mediaBuffering(true);
       }
+    }
+  }
+
+  @override
+  void mediaPosition(Duration position) {
+    super.mediaPosition(position);
+    if (position > Duration.zero && _openMarks.containsKey('提交开流')) {
+      // open() completes when mpv accepts the command, not when playback starts.
+      _markOpen('播放进度');
+      _logOpenDuration();
     }
   }
 
@@ -1404,13 +1440,12 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     rxRoomId.value = roomId;
 
     // 清除全部消息
-    liveDanmaku.stop();
+    _stopDanmaku();
     messages.clear();
     superChats.clear();
     danmakuController?.clear();
 
-    // 重新设置LiveDanmaku
-    liveDanmaku = site.liveSite.getDanmaku();
+    // loadData creates a new source after the native player has stopped.
 
     // 停止播放
     await _playerOperation;
@@ -1483,6 +1518,7 @@ ${errorStackTrace ?? ''}''');
   @override
   void onClose() async {
     _roomClosed = true;
+    disposeStream();
     _emoticons?.dispose();
     _emoticons = null;
     _bufferingTimer?.cancel();
@@ -1496,9 +1532,11 @@ ${errorStackTrace ?? ''}''');
     }
     WidgetsBinding.instance.removeObserver(this);
     scrollController.removeListener(scrollListener);
+    scrollController.dispose();
     autoExitTimer?.cancel();
+    _autoExitFallbackTimer?.cancel();
 
-    liveDanmaku.stop();
+    _stopDanmaku();
     danmakuController = null;
     _liveDurationTimer?.cancel(); // 页面关闭时取消定时器
     await _playerOperation;

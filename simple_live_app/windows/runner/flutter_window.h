@@ -29,6 +29,12 @@ class FlutterWindow : public Win32Window {
   void HideToTray();
   void RestoreFromTray();
   void RemoveTrayIcon();
+  void InvalidateAppearance();
+  flutter::EncodableMap DisplayCapabilities();
+  std::wstring refresh_device_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> refresh_channel_;
+  bool appearance_pending_ = false;
+  WPARAM appearance_size_state_ = SIZE_RESTORED;
   bool tray_icon_visible_ = false;
   HWND tray_window_ = nullptr;
 

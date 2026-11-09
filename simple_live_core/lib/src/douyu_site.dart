@@ -1,3 +1,4 @@
+import 'common/request_pool.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'model/room_category_name.dart';
@@ -96,7 +97,14 @@ class DouyuSite implements LiveSite {
   @override
   Future<List<LivePlayQuality>> getPlayQualites({
     required LiveRoomDetail detail,
-  }) async {
+  }) => _qualityRequests.run(
+    jsonEncode([detail.roomId, detail.data.toString()]),
+    () => _loadPlayQualities(detail),
+  );
+
+  final _qualityRequests = InFlightRequests<List<LivePlayQuality>>();
+
+  Future<List<LivePlayQuality>> _loadPlayQualities(LiveRoomDetail detail) async {
     var data = detail.data.toString();
     data += "&cdn=&rate=-1&ver=Douyu_223061205&iar=1&ive=1&hevc=0&fa=0";
     List<LivePlayQuality> qualities = [];
@@ -160,6 +168,18 @@ class DouyuSite implements LiveSite {
     String args,
     int rate,
     String cdn,
+  ) => _playUrlRequests.run(
+    jsonEncode([roomId, args, rate, cdn]),
+    () => _loadPlayUrl(roomId, args, rate, cdn),
+  );
+
+  final _playUrlRequests = InFlightRequests<String>();
+
+  Future<String> _loadPlayUrl(
+    String roomId,
+    String args,
+    int rate,
+    String cdn,
   ) async {
     args += "&cdn=$cdn&rate=$rate";
     var result = await HttpClient.instance.postJson(
@@ -213,54 +233,21 @@ class DouyuSite implements LiveSite {
     return LiveCategoryResult(hasMore: hasMore, items: items);
   }
 
-  final Map<String, Future<String>> _encPrefetch = {};
-  final Map<String, Future<Map>> _h5Prefetch = {};
+  final _encPrefetch = PrefetchRequests<String>();
+  final _h5Prefetch = PrefetchRequests<Map>();
 
   /// 取流加密串和 h5 房间信息都只依赖 roomId，进房时先和房间信息一起发出去。
   @override
   void prefetchRoom(String roomId) {
-    if (!_encPrefetch.containsKey(roomId)) {
-      if (_encPrefetch.length >= 8) {
-        _encPrefetch.remove(_encPrefetch.keys.first);
-      }
-      final request = _fetchHomeH5Enc(roomId);
-      _encPrefetch[roomId] = request;
-      // 预热结果没人消费时，失败不能变成未捕获异常。
-      request.catchError((Object _) => '');
-    }
-    if (!_h5Prefetch.containsKey(roomId)) {
-      if (_h5Prefetch.length >= 8) {
-        _h5Prefetch.remove(_h5Prefetch.keys.first);
-      }
-      final request = _fetchH5Room(roomId);
-      _h5Prefetch[roomId] = request;
-      request.catchError((Object _) => <String, dynamic>{});
-    }
+    _encPrefetch.prefetch(roomId, () => _fetchHomeH5Enc(roomId));
+    _h5Prefetch.prefetch(roomId, () => _fetchH5Room(roomId));
   }
 
-  Future<String> _takeHomeH5Enc(String roomId) async {
-    final prefetched = _encPrefetch.remove(roomId);
-    if (prefetched != null) {
-      try {
-        return await prefetched;
-      } catch (_) {
-        // 预热失败不影响主流程，下面重新请求。
-      }
-    }
-    return _fetchHomeH5Enc(roomId);
-  }
+  Future<String> _takeHomeH5Enc(String roomId) =>
+      _encPrefetch.take(roomId, () => _fetchHomeH5Enc(roomId));
 
-  Future<Map> _takeH5Room(String roomId) async {
-    final prefetched = _h5Prefetch.remove(roomId);
-    if (prefetched != null) {
-      try {
-        return await prefetched;
-      } catch (_) {
-        // 预热失败不影响主流程，下面重新请求。
-      }
-    }
-    return _fetchH5Room(roomId);
-  }
+  Future<Map> _takeH5Room(String roomId) =>
+      _h5Prefetch.take(roomId, () => _fetchH5Room(roomId));
 
   Future<String> _fetchHomeH5Enc(String roomId) {
     return HttpClient.instance.getText(
@@ -288,7 +275,12 @@ class DouyuSite implements LiveSite {
   }
 
   @override
-  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) =>
+      _roomRequests.run(roomId, () => _loadRoomDetail(roomId));
+
+  final _roomRequests = InFlightRequests<LiveRoomDetail>();
+
+  Future<LiveRoomDetail> _loadRoomDetail(String roomId) async {
     Map roomInfo = await _getRoomInfo(roomId);
     final status = int.tryParse(roomInfo['show_status']?.toString() ?? '');
     if (status == null) throw StateError('斗鱼房间未返回直播状态');

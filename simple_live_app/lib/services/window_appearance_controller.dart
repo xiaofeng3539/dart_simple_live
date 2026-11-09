@@ -55,7 +55,7 @@ class WindowAppearanceController extends GetxController {
     await apply();
   }
 
-  Future<void> apply({Brightness? brightness}) {
+  Future<void> apply({Brightness? brightness, bool force = false}) {
     if (!isWindows) return Future.value();
     final mode = _storage.getValue<int>(LocalStorageService.kThemeMode, 0);
     _brightness = brightness ??
@@ -67,6 +67,7 @@ class WindowAppearanceController extends GetxController {
                     .instance.platformDispatcher.platformBrightness);
     // Serialize native updates. Rapid selections must never leave an older effect last.
     _operation = _operation.then((_) async {
+      final previous = effective.value;
       var material = selected.value;
       try {
         final caps = await _channel
@@ -82,7 +83,9 @@ class WindowAppearanceController extends GetxController {
         }
         final key = '${material.name}:${border.value}:${_brightness.name}:${windowsBuild.value}';
         // Native decoration can itself send theme notifications; do not feed them back forever.
-        if (_appliedKey == key) return;
+        // DWM/window restoration can discard the native backdrop without any
+        // preference changing. Only those invalidation events bypass this cache.
+        if (!force && _appliedKey == key) return;
         await (_nativeReady ??= Window.initialize());
         final effect = switch (material) {
           WindowMaterial.lightAcrylic ||
@@ -114,7 +117,10 @@ class WindowAppearanceController extends GetxController {
         effective.value = WindowMaterial.solid;
         Log.e('窗口材质不可用，使用纯色：$error', stack);
       }
-      if (Get.context != null) Get.forceAppUpdate();
+      // Restoring the same native effect must not rebuild the player or routes.
+      if (previous != effective.value && Get.context != null) {
+        Get.forceAppUpdate();
+      }
     });
     return _operation;
   }

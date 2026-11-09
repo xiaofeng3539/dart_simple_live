@@ -208,11 +208,11 @@ class FollowUserController extends BasePageController<FollowUser> {
     defaultFilterId.value = tag.id;
   }
 
-  void removeItem(FollowUser item) async {
-    var result =
-    await Utils.showAlertDialog("确定要取消关注${item.userName}吗?", title: "取消关注");
-    if (!result) {
-      return;
+  Future<void> removeItem(FollowUser item, {bool confirm = true}) async {
+    if (confirm) {
+      final result = await Utils.showAlertDialog(
+          "确定要取消关注${item.userName}吗?", title: "取消关注");
+      if (!result) return;
     }
     // 取消关注同时删除标签内的 userId
     if(item.tag != "全部"){
@@ -221,7 +221,7 @@ class FollowUserController extends BasePageController<FollowUser> {
       updateTag(tag);
     }
     await DBService.instance.followBox.delete(item.id);
-    refreshData();
+    await refreshData();
   }
 
   void updateItem(FollowUser item){

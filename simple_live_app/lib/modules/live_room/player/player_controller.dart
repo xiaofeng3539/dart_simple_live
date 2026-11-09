@@ -20,6 +20,7 @@ import 'package:simple_live_app/app/custom_throttle.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/system_proxy_service.dart';
+import 'package:simple_live_app/services/native_refresh_controller.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -60,12 +61,18 @@ mixin PlayerMixin {
 
   Future<void> _configurePlayer() async {
     var pp = player.platform as NativePlayer;
+    // Keep source timestamps/frame count; physical display Hz is managed separately.
+    await pp.setProperty('interpolation', 'no');
+    await pp.setProperty('video-sync', 'audio');
     // 直播使用有上限的内存缓存。cache-secs 是预读上限，不是起播等待时间。
     await pp.setProperty('cache-on-disk', 'no');
     await pp.setProperty('cache-secs', '20');
     await pp.setProperty('demuxer-max-back-bytes', '4194304');
     await pp.setProperty('cache-pause', 'yes');
-    await pp.setProperty('cache-pause-wait', '2');
+    // Desktop live-edge streams may deliver in real time: requiring two seconds
+    // here can delay startup while leaving the first decoded image frozen.
+    // Keep initial buffering enabled, but use a bounded half-second desktop gate.
+    await pp.setProperty('cache-pause-wait', Platform.isWindows ? '0.5' : '2');
     // 起播先积累少量数据，避免刚出画面就因缓存耗尽而停顿。
     await pp.setProperty('cache-pause-initial', 'yes');
     await pp.setProperty('network-timeout', '10');
@@ -790,6 +797,7 @@ class PlayerController extends BaseController
   void onInit() {
     initSystem();
     initStream();
+    initNativeRefresh();
     //设置音量
     player.setVolume(AppSettingsController.instance.playerVolume.value);
     super.onInit();
@@ -803,8 +811,26 @@ class PlayerController extends BaseController
   StreamSubscription? _playingSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<bool>? _bufferingSubscription;
+  bool _streamsInitialized = false;
+  NativeRefreshController? _nativeRefresh;
+  StreamSubscription<Tracks>? _sourceTracks;
+
+  void initNativeRefresh() {
+    if (_nativeRefresh != null || _playerClosing) return;
+    final refresh = _nativeRefresh = NativeRefreshController();
+    refresh.start();
+    _sourceTracks = player.stream.tracks.listen((tracks) {
+      final selected = player.state.track.video.id;
+      final videos = tracks.video.where((v) => v.fps != null && v.fps! > 0).toList();
+      if (videos.isEmpty) return;
+      final track = videos.firstWhere((v) => v.id == selected, orElse: () => videos.first);
+      unawaited(refresh.updateSource(track.fps!));
+    });
+  }
 
   void initStream() {
+    if (_playerClosing || _streamsInitialized) return;
+    _streamsInitialized = true;
     _bufferingSubscription = player.stream.buffering.listen(mediaBuffering);
     _errorSubscription = player.stream.error.listen((event) {
       Log.d("播放器错误：$event");
@@ -825,7 +851,7 @@ class PlayerController extends BaseController
     });
 
     _positionSubscription = player.stream.position.listen((position) {
-      if (position > Duration.zero) hasPlayed.value = true;
+      mediaPosition(position);
     });
 
     _completedSubscription = player.stream.completed.listen((event) {
@@ -851,6 +877,11 @@ class PlayerController extends BaseController
   }
 
   void disposeStream() {
+    _sourceTracks?.cancel();
+    final refresh = _nativeRefresh;
+    _nativeRefresh = null;
+    if (refresh != null) unawaited(refresh.dispose());
+    _streamsInitialized = false;
     _bufferingSubscription?.cancel();
     _errorSubscription?.cancel();
     _completedSubscription?.cancel();
@@ -872,11 +903,21 @@ class PlayerController extends BaseController
 
   void mediaBuffering(bool buffering) {}
 
+  void mediaPosition(Duration position) {
+    if (position > Duration.zero) hasPlayed.value = true;
+  }
+
   void showDebugInfo() {
+    final refresh = _nativeRefresh;
     Utils.showBottomSheet(
       title: "播放信息",
       child: ListView(
         children: [
+          if (refresh != null) Obx(() => ListTile(
+            title: const Text('原生帧率 / 屏幕刷新率'),
+            subtitle: Text('直播源 ${refresh.sourceFps.value > 0 ? '${refresh.sourceFps.value.toStringAsFixed(2)} fps' : '读取中'} · '
+                '屏幕 ${refresh.displayHz.value > 0 ? '${refresh.displayHz.value.toStringAsFixed(2)} Hz' : '系统管理'} · 插帧关闭'),
+          )),
           ListTile(
             title: const Text("Resolution"),
             subtitle: Text('${player.state.width}x${player.state.height}'),
@@ -978,16 +1019,24 @@ class PlayerController extends BaseController
     hideControlsTimer?.cancel();
     hidevolumeTimer?.cancel();
     hideSeekTipTimer?.cancel();
-    if (smallWindowState.value) {
-      await exitSmallWindow();
-    }
-    if (fullScreenState.value) {
-      await exitFull();
-    }
+    // 先解绑事件，避免等待窗口/系统恢复时迟到的错误触发恢复或唤醒锁。
     disposeStream();
-    disposeDanmakuController();
-    await resetSystem();
-    await player.dispose();
-    super.onClose();
+    try {
+      if (smallWindowState.value) {
+        await exitSmallWindow();
+      }
+      if (fullScreenState.value) {
+        await exitFull();
+      }
+      disposeDanmakuController();
+      await resetSystem();
+    } finally {
+      // 窗口或系统插件恢复失败，也必须释放原生解码和输出资源。
+      try {
+        await player.dispose();
+      } finally {
+        super.onClose();
+      }
+    }
   }
 }

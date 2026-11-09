@@ -43,6 +43,14 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                   ),
                 ),
                 if (Platform.isAndroid) AppStyle.divider,
+                if (Platform.isWindows || Platform.isAndroid) ...[
+                  const ListTile(
+                    title: Text('屏幕刷新率'),
+                    subtitle: Text('跟随系统设置（60/90/120Hz 等），不在进出直播间时切换显示模式。不改变直播源帧率，不插帧。'),
+                    trailing: Text('系统管理'),
+                  ),
+                  AppStyle.divider,
+                ],
                 Obx(
                   () => Visibility(
                     visible: Platform.isAndroid,

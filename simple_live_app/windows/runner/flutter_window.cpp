@@ -11,9 +11,17 @@
 namespace {
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kExitMessage = WM_APP + 2;
+constexpr UINT kAppearanceMessage = WM_APP + 3;
 constexpr UINT_PTR kExitTimer = 1;
 constexpr UINT kShowCommand = 40001;
 constexpr UINT kExitCommand = 40002;
+MONITORINFOEXW DisplayForWindow(HWND window) {
+  MONITORINFOEXW info{};
+  info.cbSize = sizeof(info);
+  GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST),
+      reinterpret_cast<MONITORINFO*>(&info));
+  return info;
+}
 }
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -37,6 +45,19 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  refresh_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "simple_live/display_refresh",
+      &flutter::StandardMethodCodec::GetInstance());
+  refresh_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        if (call.method_name() == "capabilities") {
+          result->Success(DisplayCapabilities());
+          return;
+        }
+        // Read-only bridge: changing modes here blanks the physical monitor.
+        result->NotImplemented();
+      });
   window_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
       flutter_controller_->engine()->messenger(), "simple_live/window",
       &flutter::StandardMethodCodec::GetInstance());
@@ -119,6 +140,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  refresh_channel_.reset();
+  appearance_pending_ = false;
   RemoveTrayIcon();
   window_channel_.reset();
   if (flutter_controller_) {
@@ -126,6 +149,15 @@ void FlutterWindow::OnDestroy() {
   }
 
   Win32Window::OnDestroy();
+}
+
+flutter::EncodableMap FlutterWindow::DisplayCapabilities() {
+  const auto monitor = DisplayForWindow(GetHandle());
+  DEVMODEW current{};
+  current.dmSize = sizeof(current);
+  const double hz = EnumDisplaySettingsW(monitor.szDevice, ENUM_CURRENT_SETTINGS, &current)
+      ? current.dmDisplayFrequency : 0;
+  return {{flutter::EncodableValue("current"), flutter::EncodableValue(hz)}};
 }
 
 void FlutterWindow::EnsureTrayIcon() {
@@ -165,10 +197,51 @@ void FlutterWindow::RestoreFromTray() {
   SetForegroundWindow(GetHandle());
 }
 
+void FlutterWindow::InvalidateAppearance() {
+  // Merge the activate/restore/display messages from one transition. Do not
+  // force on WM_THEMECHANGED: setting our own DWM attributes can send it again.
+  if (!window_channel_ || appearance_pending_) return;
+  appearance_pending_ = PostMessageW(GetHandle(), kAppearanceMessage, 0, 0) != FALSE;
+}
+
 LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (refresh_channel_ && (message == WM_MOVE || message == WM_DISPLAYCHANGE)) {
+    const auto monitor = DisplayForWindow(hwnd);
+    const bool moved = refresh_device_ != monitor.szDevice;
+    if (message == WM_DISPLAYCHANGE || moved) {
+      refresh_device_ = monitor.szDevice;
+      refresh_channel_->InvokeMethod("displayChanged", nullptr);
+    }
+  }
+  if (message == kAppearanceMessage) {
+    appearance_pending_ = false;
+    if (window_channel_) {
+      window_channel_->InvokeMethod("onAppearanceInvalidated", nullptr);
+    }
+    return 0;
+  }
+  if (message == WM_DWMCOMPOSITIONCHANGED || message == WM_DISPLAYCHANGE ||
+      (message == WM_ACTIVATE && LOWORD(wparam) != WA_INACTIVE) ||
+      (message == WM_SHOWWINDOW && wparam) ||
+      (message == WM_POWERBROADCAST &&
+       (wparam == PBT_APMRESUMEAUTOMATIC || wparam == PBT_APMRESUMESUSPEND))) {
+    InvalidateAppearance();
+  }
+  if (message == WM_SIZE) {
+    if (wparam != appearance_size_state_ && wparam != SIZE_MINIMIZED) {
+      InvalidateAppearance();
+    }
+    appearance_size_state_ = wparam;
+  }
+  if (message == WM_STYLECHANGED && wparam == static_cast<WPARAM>(GWL_STYLE)) {
+    const auto* style = reinterpret_cast<const STYLESTRUCT*>(lparam);
+    if ((style->styleOld ^ style->styleNew) & (WS_POPUP | WS_CAPTION | WS_THICKFRAME)) {
+      InvalidateAppearance();
+    }
+  }
   if ((message == WM_SETTINGCHANGE || message == WM_THEMECHANGED) && window_channel_) {
     window_channel_->InvokeMethod("onAppearanceChanged", nullptr);
   }

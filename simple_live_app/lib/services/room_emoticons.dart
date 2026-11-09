@@ -1,9 +1,14 @@
+import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 /// Room-scoped: an old network response can never overwrite a new room's map.
 class RoomEmoticons extends ChangeNotifier {
+  // Identity keys avoid retaining every message for the room's entire lifetime.
+  // LRU lookups and eviction are O(1); catalog changes invalidate stale tokens.
+  final _resolved =
+      LinkedHashMap<LiveMessage, List<LiveMessagePart>>.identity();
   final EmoticonCatalog _catalog;
   final Future<List<LiveEmoticon>> Function(CancelToken) _fetch;
   final DateTime Function() _clock;
@@ -50,6 +55,7 @@ class RoomEmoticons extends ChangeNotifier {
       final entries = await _fetch(cancel).timeout(const Duration(seconds: 5));
       if (_disposed) return;
       _catalog.addAll(entries);
+      _resolved.clear();
       _loaded = true;
       notifyListeners();
     } catch (_) {
@@ -64,6 +70,16 @@ class RoomEmoticons extends ChangeNotifier {
   }
 
   List<LiveMessagePart> resolve(LiveMessage message) {
+    if (_disposed) return _resolve(message);
+    final cached = _resolved.remove(message);
+    final parts =
+        cached ?? List<LiveMessagePart>.unmodifiable(_resolve(message));
+    _resolved[message] = parts;
+    if (_resolved.length > 512) _resolved.remove(_resolved.keys.first);
+    return parts;
+  }
+
+  List<LiveMessagePart> _resolve(LiveMessage message) {
     if (message.emoticonKey != null) {
       final match = _catalog.split(message.emoticonKey!).firstOrNull?.emoticon;
       if (match != null)
@@ -82,6 +98,7 @@ class RoomEmoticons extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _resolved.clear();
     _cancel?.cancel('room closed');
     super.dispose();
   }

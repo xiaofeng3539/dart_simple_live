@@ -78,6 +78,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
 
   /// 运行状态
   bool _running = true;
+  bool _tickerModeEnabled = true;
 
   @override
   void initState() {
@@ -113,6 +114,8 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _tickerModeEnabled = TickerMode.valuesOf(context).enabled;
+    _setImagesActive(_running && _tickerModeEnabled);
     final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
     if (devicePixelRatio != this.devicePixelRatio) {
       this.devicePixelRatio = devicePixelRatio;
@@ -198,7 +201,10 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
           strokeWidth: _option.strokeWidth,
           devicePixelRatio: devicePixelRatio,
           fontFamily: _option.fontFamily,
-        ));
+        ))
+      ..setImagesActive(_running && _tickerModeEnabled)
+      ..initializeInlineImages(
+          paragraph, _option.fontSize, _option.strokeWidth);
 
     for (var i = 0; i < _trackYPositions.length; i++) {
       final yPosition = _trackYPositions[i];
@@ -247,6 +253,14 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
   /// 添加弹幕
   void _addDanmaku(DanmakuContentItem<T> content) {
     if (!mounted) {
+      return;
+    }
+    // Massive mode and paused screens cannot rely on track admission/expiry
+    // to bound retention. Reject excess items before layout or image allocation.
+    if (_scrollDanmakuItems.length +
+            _staticDanmakuItems.value.length +
+            _specialDanmakuItems.length >=
+        1000) {
       return;
     }
 
@@ -304,6 +318,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
   void _pause() {
     if (!mounted) return;
     _running = false;
+    _setImagesActive(false);
     if (_ticker.isActive) {
       _lastTick = _tickNotifier.value;
       _ticker.stop();
@@ -314,10 +329,18 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
   void _resume() {
     if (!mounted) return;
     _running = true;
+    _setImagesActive(_tickerModeEnabled);
     if (!_ticker.isActive) {
       _ticker.start();
     }
     _staticDanmakuItems.refresh();
+  }
+
+  void _setImagesActive(bool active) {
+    for (final item
+        in _scrollDanmakuItems.followedBy(_staticDanmakuItems.value)) {
+      item.setImagesActive(active);
+    }
   }
 
   /// 清空弹幕

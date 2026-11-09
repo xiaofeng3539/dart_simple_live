@@ -212,6 +212,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         if (call.method == 'onAppearanceChanged') {
           await Get.find<WindowAppearanceController>().apply();
         }
+        if (call.method == 'onAppearanceInvalidated') {
+          await Get.find<WindowAppearanceController>().apply(force: true);
+        }
       });
     }
   }

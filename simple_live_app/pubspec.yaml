@@ -1,5 +1,5 @@
 name: simple_live_app
-version: 2.0.11+24011
+version: 2.0.21+24021
 publish_to: none
 description: "Simple Live APP"
 environment:
@@ -85,6 +85,7 @@ dependencies:
 
 
 dev_dependencies:
+  fake_async: ^1.3.3
   flutter_lints: ^6.0.0
   build_runner: ^2.3.3
   hive_generator: ^2.0.0

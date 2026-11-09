@@ -10,9 +10,20 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Proxy
 import android.os.Build
+import android.hardware.display.DisplayManager
+import android.view.Display
 
 class MainActivity: FlutterActivity() {
     private var networkChannel: MethodChannel? = null
+    private var refreshChannel: MethodChannel? = null
+    private var refreshManager: DisplayManager? = null
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(id: Int) {}
+        override fun onDisplayRemoved(id: Int) {}
+        override fun onDisplayChanged(id: Int) {
+            refreshChannel?.invokeMethod("displayChanged", null)
+        }
+    }
     private var proxyReceiverRegistered = false
     private val proxyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -22,6 +33,23 @@ class MainActivity: FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        refreshChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "simple_live/display_refresh")
+        refreshChannel?.setMethodCallHandler { call, result ->
+            try {
+                val screen = currentScreen()
+                when (call.method) {
+                    "capabilities" -> {
+                        // Observe only: preferredDisplayModeId may trigger a non-seamless switch.
+                        result.success(mapOf("current" to screen.refreshRate.toDouble()))
+                    }
+                    else -> result.notImplemented()
+                }
+            } catch (error: Exception) {
+                result.error("DISPLAY_REFRESH", "Display mode unavailable", null)
+            }
+        }
+        refreshManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+        refreshManager?.registerDisplayListener(displayListener, android.os.Handler(mainLooper))
         networkChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "simple_live/network")
         networkChannel?.setMethodCallHandler { call, result ->
             if (call.method != "getSystemProxy") {
@@ -51,9 +79,17 @@ class MainActivity: FlutterActivity() {
     }
 
     override fun onDestroy() {
+        refreshManager?.unregisterDisplayListener(displayListener)
+        refreshChannel?.setMethodCallHandler(null)
+        refreshChannel = null
         if (proxyReceiverRegistered) unregisterReceiver(proxyReceiver)
         networkChannel?.setMethodCallHandler(null)
         networkChannel = null
         super.onDestroy()
     }
+
+    @Suppress("DEPRECATION")
+    private fun currentScreen(): Display =
+        (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else null) ?: windowManager.defaultDisplay
+
 }

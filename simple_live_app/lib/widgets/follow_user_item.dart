@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:get/get.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:simple_live_app/app/app_style.dart';
@@ -127,14 +128,36 @@ class FollowUserItem extends StatelessWidget {
             )
           : (onRemove == null
               ? null
-              : IconButton(
-                  onPressed: () {
-                    onRemove?.call();
-                  },
-                  icon: const Icon(Remix.dislike_line),
-                )),
+              : _buildRemoveButton(context)),
       onTap: onTap,
       onLongPress: onLongPress,
+    );
+  }
+
+  Widget _buildRemoveButton(BuildContext context) {
+    final desktop = const {
+      TargetPlatform.windows, TargetPlatform.macOS, TargetPlatform.linux,
+    }.contains(Theme.of(context).platform);
+    final button = IconButton(
+      tooltip: desktop ? '双击鼠标右键取消关注' : '双击取消关注',
+      // Absorb primary taps so the surrounding ListTile does not open the room.
+      onPressed: () {},
+      icon: const Icon(Remix.dislike_line),
+    );
+    return RawGestureDetector(
+      behavior: HitTestBehavior.opaque,
+      gestures: {
+        DoubleTapGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<DoubleTapGestureRecognizer>(
+          () => DoubleTapGestureRecognizer(
+            supportedDevices: desktop ? const {PointerDeviceKind.mouse} : null,
+            allowedButtonsFilter: (buttons) =>
+                buttons == (desktop ? kSecondaryMouseButton : kPrimaryButton),
+          ),
+          (recognizer) => recognizer.onDoubleTap = onRemove,
+        ),
+      },
+      child: button,
     );
   }
 

@@ -56,6 +56,35 @@ void main() {
     await controller.apply();
     expect(effects.length, initial);
   });
+  test('原生材质失效后相同配置也恢复，不改深色和材质偏好', () async {
+    storage.values[LocalStorageService.kThemeMode] = 2;
+    storage.values['WindowMaterial'] = WindowMaterial.acrylic.index;
+    final controller = WindowAppearanceController(isWindows: true);
+    await controller.initialize();
+    final initial = effects.length;
+    await controller.apply(force: true);
+    expect(effects.length, initial + 1);
+    expect(effects.last.arguments['dark'], isTrue);
+    expect(controller.selected.value, WindowMaterial.acrylic);
+    expect(controller.effective.value, WindowMaterial.acrylic);
+    expect(controller.theme(ThemeData.dark()).scaffoldBackgroundColor,
+        Colors.transparent);
+    await controller.apply();
+    expect(effects.length, initial + 1);
+    expect(storage.values['WindowMaterial'], WindowMaterial.acrylic.index);
+  });
+  test('系统透明效果恢复后重新应用原选择，不停留在纯色', () async {
+    final controller = WindowAppearanceController(isWindows: true);
+    await controller.initialize();
+    await controller.setMaterial(WindowMaterial.acrylic);
+    transparency = false;
+    await controller.apply();
+    expect(controller.effective.value, WindowMaterial.solid);
+    transparency = true;
+    await controller.apply(force: true);
+    expect(controller.effective.value, WindowMaterial.acrylic);
+    expect(controller.selected.value, WindowMaterial.acrylic);
+  });
   test('连续选择以最后一项为准，不遗留旧材质', () async {
     final controller = WindowAppearanceController(isWindows: true);
     await controller.initialize();

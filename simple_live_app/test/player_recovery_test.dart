@@ -20,11 +20,13 @@ class _Player implements Player {
   final _Streams stream = _Streams();
   int opens = 0;
   int jumps = 0;
+  Completer<void>? opening;
   @override
   PlayerState state = const PlayerState(playing: true, buffering: true);
   @override
   Future<void> open(Playable playable, {bool play = true}) async {
     opens++;
+    await opening?.future;
   }
 
   @override
@@ -51,10 +53,11 @@ class _Room extends LiveRoomController {
   _Room({Site? source})
       : super(pSite: source ?? Sites.allSites['huya']!, pRoomId: '1');
   final fake = _Player();
+  int initializations = 0;
   @override
   Player get player => fake;
   @override
-  Future<void> initializePlayer() async {}
+  Future<void> initializePlayer() async { initializations++; }
 }
 
 class _Huya extends HuyaSite {
@@ -85,6 +88,15 @@ class _FlakyHuya extends HuyaSite {
     if (calls == 1) throw StateError('暂时无法获取播放地址');
     return LivePlayUrl(urls: ['https://example.com/live.flv']);
   }
+}
+
+class _PermissionHuya extends HuyaSite {
+  @override
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async => _liveDetail();
+  @override
+  Future<LivePlayUrl> getPlayUrls({required LiveRoomDetail detail,
+      required LivePlayQuality quality}) async =>
+      throw StateError('平台拒绝此画质，可能需要 VIP 播放权限，请切换 2K');
 }
 
 class _SlowHuya extends _Huya {
@@ -125,6 +137,45 @@ void main() {
           const MethodChannel('wakelock_plus'), (_) async => null);
   setUp(() => Get.put<AppSettingsController>(_Settings()));
   tearDown(() => Get.reset());
+  testWidgets('首次开流和同线路操作重叠时不在首帧后再次open', (tester) async {
+    final room = _Room();
+    room.playUrls.add('https://first/live.flv');
+    room.currentLineIndex = 0;
+    final gate = room.fake.opening = Completer<void>();
+    room.initPlaylist(0);
+    await tester.pump();
+    final overlapping = room.setPlayer();
+    await tester.pump();
+    gate.complete();
+    await tester.pump();
+    await overlapping;
+    expect(room.fake.opens, 1);
+  });
+  test('手动开流同样等待播放器初始化', () async {
+    final room = _Room();
+    room.playUrls.add('https://first/live.flv');
+    room.currentLineIndex = 0;
+    await room.setPlayer();
+    expect(room.initializations, 1);
+    expect(room.fake.opens, 1);
+  });
+  testWidgets('同一线路重复点击在原生打开完成前合并为一次，完成后可主动重试', (tester) async {
+    final room = _Room();
+    room.playUrls.add('https://first/live.flv');
+    room.currentLineIndex = 0;
+    final gate = room.fake.opening = Completer<void>();
+    final first = room.setPlayer();
+    final second = room.setPlayer();
+    final third = room.setPlayer();
+    await tester.pump();
+    expect(room.fake.opens, 1);
+    gate.complete();
+    await tester.pump();
+    await Future.wait([first, second, third]);
+    room.fake.opening = null;
+    await room.setPlayer();
+    expect(room.fake.opens, 2);
+  });
   testWidgets('playing 通知不是实际播放进展，进度前进后才标记已播放', (tester) async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMessageHandler(
@@ -246,6 +297,19 @@ void main() {
     await tester.pump();
     expect(source.calls, 2);
     expect(room.fake.opens, 1);
+  });
+  testWidgets('平台拒绝4K权限后显示原因而不是只留下黑屏', (tester) async {
+    final source = _PermissionHuya();
+    final room = _Room(source: Site(id: 'huya', name: '虎牙', logo: '', liveSite: source));
+    room.detail.value = _liveDetail();
+    room.qualites.add(LivePlayQuality(quality: '4K', data: 20000));
+    room.currentQuality = 0;
+    room.getPlayUrl(request: 0);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
+    expect(room.errorMsg.value, contains('VIP'));
+    expect(room.fake.opens, 0);
   });
   testWidgets('持续缓冲15秒切换备用线路', (tester) async {
     final room = _Room();

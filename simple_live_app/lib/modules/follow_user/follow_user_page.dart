@@ -372,7 +372,7 @@ class _FollowUserPageState extends State<FollowUserPage>
     return FollowUserItem(
       item: item,
       onRemove: () {
-        controller.removeItem(item);
+        controller.removeItem(item, confirm: false);
       },
       onTap: () {
         AppNavigator.toLiveRoomDetail(site: site, roomId: item.roomId);

@@ -6,12 +6,20 @@ import 'package:simple_live_app/widgets/danmaku/models/danmaku_content_item.dart
 import 'package:simple_live_app/widgets/danmaku/utils/utils.dart';
 
 class DanmakuItem<T> {
+  bool _imagesActive = true;
   List<InlineImageSlot>? _inlineImages;
   final VoidCallback? onImageChanged;
   String? fontFamily;
   int get inlineImageCount => _inlineImages?.length ?? 0;
   int get loadedInlineImageCount =>
       _inlineImages?.where((e) => e.loaded).length ?? 0;
+
+  void setImagesActive(bool active) {
+    _imagesActive = active;
+    for (final slot in _inlineImages ?? <InlineImageSlot>[]) {
+      slot.setActive(active);
+    }
+  }
 
   /// 弹幕内容
   final DanmakuContentItem<T> content;
@@ -67,18 +75,11 @@ class DanmakuItem<T> {
     this.fontFamily,
   });
 
-  void drawParagraphIfNeeded(
-    double fontSize,
-    int fontWeight,
-    double strokeWidth,
-    double devicePixelRatio,
-  ) {
+  // Reuse the admission/rasterization paragraph instead of laying out spans
+  // a second time just to recover their placeholder boxes.
+  void initializeInlineImages(
+      ui.Paragraph paragraph, double fontSize, double strokeWidth) {
     if (_inlineImages == null && content.spans != null) {
-      final paragraph = DmUtils.generateParagraph(
-          content: content,
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          fontFamily: fontFamily);
       final boxes = paragraph.getBoxesForPlaceholders();
       final images = content.spans!.where((e) => e.image != null).toList();
       _inlineImages = [
@@ -88,6 +89,7 @@ class DanmakuItem<T> {
                   strokeWidth / 2 + (content.selfSend ? 2 : 0),
                   strokeWidth / 2)),
               provider: images[i].image!,
+              active: _imagesActive,
               text: images[i].text,
               style: TextStyle(
                   color: content.color,
@@ -95,8 +97,15 @@ class DanmakuItem<T> {
                   fontFamily: fontFamily),
               onChanged: () => onImageChanged?.call())
       ];
-      paragraph.dispose();
     }
+  }
+
+  void drawParagraphIfNeeded(
+    double fontSize,
+    int fontWeight,
+    double strokeWidth,
+    double devicePixelRatio,
+  ) {
     if (image == null) {
       final paragraph = DmUtils.generateParagraph(
         content: content,
@@ -104,6 +113,7 @@ class DanmakuItem<T> {
         fontWeight: fontWeight,
         fontFamily: fontFamily,
       );
+      initializeInlineImages(paragraph, fontSize, strokeWidth);
       image = DmUtils.recordDanmakuImage(
         contentParagraph: paragraph,
         content: content,
@@ -117,6 +127,14 @@ class DanmakuItem<T> {
           strokeWidth +
           (content.selfSend ? 4.0 : 0.0);
       height = paragraph.height + strokeWidth;
+      paragraph.dispose();
+    } else if (_inlineImages == null && content.spans != null) {
+      final paragraph = DmUtils.generateParagraph(
+          content: content,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          fontFamily: fontFamily);
+      initializeInlineImages(paragraph, fontSize, strokeWidth);
       paragraph.dispose();
     }
   }

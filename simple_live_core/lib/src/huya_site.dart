@@ -1,10 +1,14 @@
+import 'common/request_pool.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'model/room_category_name.dart';
 import 'dart:math';
 
 import 'package:simple_live_core/simple_live_core.dart';
 import 'package:simple_live_core/src/common/http_client.dart';
+import 'package:simple_live_core/src/common/core_error.dart';
 import 'package:crypto/crypto.dart';
+import 'package:dio/dio.dart';
 import 'package:simple_live_core/src/model/tars/get_cdn_token_ex_req.dart';
 import 'package:simple_live_core/src/model/tars/get_cdn_token_ex_resp.dart';
 import 'package:simple_live_core/src/model/tars/get_cdn_token_req.dart';
@@ -188,7 +192,13 @@ class HuyaSite implements LiveSite {
 
       qualities.add(
         LivePlayQuality(
-          data: {"urls": urlData.lines, "bitRate": item.bitRate},
+          data: {
+            "urls": urlData.lines,
+            "bitRate": item.bitRate,
+            // 虎牙 14000 档也提供原生 AVC 2K；内置 mpv 可直接解码，
+            // 不必为它走 HEVC FLV 私有封装或等待 HLS 分片。
+            "codec": item.codecType == 1 && item.bitRate != 14000 ? 265 : 264,
+          },
           quality: item.name,
         ),
       );
@@ -220,11 +230,23 @@ class HuyaSite implements LiveSite {
     required LivePlayQuality quality,
   }) async {
     var ls = <String>[];
+    final lines = List<HuyaLineModel>.from(quality.data["urls"]);
+    if (quality.data["codec"] == 265) {
+      // 内置解复用器不支持虎牙 codec-id 12 的私有 HEVC FLV。
+      // 只构造 HLS，不让起播等无关 FLV 的 WUP 鉴权（最长 8 秒）。
+      final urls = await Future.wait(lines
+          .where((line) => line.lineType == HuyaLineType.hls)
+          .map((line) => getPlayUrl(line, quality.data["bitRate"], codec: 265)));
+      return _selectHevcHls(urls);
+    }
     final resolved = await Future.wait<String>(
-      quality.data["urls"].map<Future<String>>((element) async {
-        var line = element as HuyaLineModel;
+      lines.map<Future<String>>((line) async {
         try {
-          var url = await getPlayUrl(line, quality.data["bitRate"]);
+          var url = await getPlayUrl(
+            line,
+            quality.data["bitRate"],
+            codec: quality.data["codec"] ?? 264,
+          );
           return url;
         } catch (e) {
           CoreLog.error(e);
@@ -240,7 +262,68 @@ class HuyaSite implements LiveSite {
     return LivePlayUrl(urls: ls, headers: {"user-agent": HYSDK_UA});
   }
 
-  Future<String> getPlayUrl(HuyaLineModel line, int bitRate) async {
+  Future<LivePlayUrl> _selectHevcHls(List<String> urls) async {
+    if (urls.isEmpty) throw StateError('虎牙当前画质未提供 HLS 线路');
+    final selected = Completer<String?>();
+    final cancel = CancelToken();
+    final rejected = <String>{};
+    var permissionDenied = false;
+    var remaining = urls.length;
+    // O(n) 小清单请求；首个有效响应立即交给播放器，不等最慢 CDN。
+    for (final url in urls) {
+      unawaited(() async {
+        try {
+          final text = (await HttpClient.instance.getText(
+            url,
+            // 与原生播放器的清单 GET 保持一致，避免 CDN 返回不同缓存响应。
+            header: {"user-agent": HYSDK_UA, "Range": "bytes=0-"},
+            cancel: cancel,
+          )).trimLeft();
+          final hasSegments = text.contains('#EXTINF:') ||
+              text.contains('#EXT-X-STREAM-INF:');
+          final hasUri = text.split('\n').any((line) =>
+              line.trim().isNotEmpty && !line.trimLeft().startsWith('#'));
+          if (text.startsWith('#EXTM3U') && hasSegments && hasUri) {
+            if (!selected.isCompleted) selected.complete(url);
+          } else {
+            rejected.add(url);
+          }
+        } catch (e) {
+          if (e is CoreError && (e.statusCode == 401 || e.statusCode == 403)) {
+            permissionDenied = true;
+          }
+          rejected.add(url);
+        } finally {
+          if (--remaining == 0 && !selected.isCompleted) selected.complete(null);
+        }
+      }());
+    }
+    String? winner;
+    try {
+      // 失效线路不再逐条占用播放器的 15 秒起播看门狗。
+      winner = await selected.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => null,
+      );
+    } finally {
+      cancel.cancel('HLS selection finished');
+    }
+    if (winner == null) {
+      throw StateError(permissionDenied
+          ? '平台拒绝此画质，可能需要 VIP 播放权限，请切换 2K 或在官方客户端验证权限'
+          : '虎牙当前画质线路暂不可用，请切换画质或重试');
+    }
+    return LivePlayUrl(
+      urls: [winner, ...urls.where((url) => url != winner && !rejected.contains(url))],
+      headers: {"user-agent": HYSDK_UA},
+    );
+  }
+
+  Future<String> getPlayUrl(
+    HuyaLineModel line,
+    int bitRate, {
+    int codec = 264,
+  }) async {
     // 原生 FLV 鉴权用于持续连接，页面鉴权仅作为接口不可用时的后备。
     var antiCode = line.lineType == HuyaLineType.hls
         ? line.hlsAntiCode
@@ -258,7 +341,12 @@ class HuyaSite implements LiveSite {
     }
     antiCode = buildAntiCode(line.streamName, line.presenterUid, antiCode);
     var extension = line.lineType == HuyaLineType.hls ? 'm3u8' : 'flv';
-    var url = '${line.line}/${line.streamName}.$extension?$antiCode&codec=264';
+    // 4K 等 HEVC 档位没有对应的 AVC 流，必须使用平台声明的编码。
+    // 部分 HEVC CDN 的明文 HTTP 地址不能起播，使用同源 HTTPS。
+    final base = codec == 265
+        ? line.line.replaceFirst(RegExp(r'^http:'), 'https:')
+        : line.line;
+    var url = '$base/${line.streamName}.$extension?$antiCode&codec=$codec';
     if (bitRate > 0) {
       url += "&ratio=$bitRate";
     }
@@ -390,7 +478,12 @@ class HuyaSite implements LiveSite {
   }
 
   @override
-  Future<LiveRoomDetail> getRoomDetail({required String roomId}) async {
+  Future<LiveRoomDetail> getRoomDetail({required String roomId}) =>
+      _roomRequests.run(roomId, () => _loadRoomDetail(roomId));
+
+  final _roomRequests = InFlightRequests<LiveRoomDetail>();
+
+  Future<LiveRoomDetail> _loadRoomDetail(String roomId) async {
     try {
       return await _getRoomDetailViaApi(roomId);
     } catch (e) {
@@ -494,7 +587,11 @@ class HuyaSite implements LiveSite {
         final name = item["sDisplayName"]?.toString() ?? "";
         if (name.isEmpty || name.contains("HDR")) continue;
         bitRates.add(
-          HuyaBitRateModel(bitRate: item["iBitRate"] ?? 0, name: name),
+          HuyaBitRateModel(
+            bitRate: item["iBitRate"] ?? 0,
+            name: name,
+            codecType: item["iCodecType"] ?? 0,
+          ),
         );
       }
     }
@@ -618,7 +715,11 @@ class HuyaSite implements LiveSite {
         continue;
       }
       huyaBiterates.add(
-        HuyaBitRateModel(bitRate: item["iBitRate"], name: name),
+        HuyaBitRateModel(
+          bitRate: item["iBitRate"],
+          name: name,
+          codecType: item["iCodecType"] ?? 0,
+        ),
       );
     }
 
@@ -980,11 +1081,20 @@ class HuyaLineModel {
 class HuyaBitRateModel {
   final String name;
   final int bitRate;
+  final int codecType;
 
-  HuyaBitRateModel({required this.bitRate, required this.name});
+  HuyaBitRateModel({
+    required this.bitRate,
+    required this.name,
+    this.codecType = 0,
+  });
 
   @override
   String toString() {
-    return json.encode({"name": name, "bitRate": bitRate});
+    return json.encode({
+      "name": name,
+      "bitRate": bitRate,
+      "codecType": codecType,
+    });
   }
 }

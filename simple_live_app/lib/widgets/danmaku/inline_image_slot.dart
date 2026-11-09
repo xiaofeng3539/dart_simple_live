@@ -5,7 +5,8 @@ import 'package:flutter/painting.dart';
 /// ImageInfo instances belong to this listener and are disposed on replacement.
 class InlineImageSlot {
   final Rect rect;
-  final ImageStream _stream;
+  final ImageProvider _provider;
+  ImageStream? _stream;
   late final ImageStreamListener _listener;
   final TextPainter _fallback;
   ImageInfo? _frame;
@@ -17,8 +18,9 @@ class InlineImageSlot {
       required ImageProvider provider,
       required String text,
       required TextStyle style,
+      bool active = true,
       required VoidCallback onChanged})
-      : _stream = provider.resolve(ImageConfiguration.empty),
+      : _provider = provider,
         _fallback = TextPainter(
             text: TextSpan(text: text, style: style),
             textDirection: TextDirection.ltr)
@@ -35,7 +37,21 @@ class InlineImageSlot {
     }, onError: (Object error, StackTrace? stack) {
       if (!_disposed) onChanged(); // fallback remains visible
     });
-    _stream.addListener(_listener);
+    setActive(active);
+  }
+
+  void setActive(bool active) {
+    if (_disposed) return;
+    if (active) {
+      if (_stream != null) return;
+      _stream = _provider.resolve(ImageConfiguration.empty);
+      _stream!.addListener(_listener);
+    } else {
+      _stream?.removeListener(_listener);
+      _stream = null;
+      _frame?.dispose();
+      _frame = null;
+    }
   }
 
   void paint(ui.Canvas canvas, Offset offset) {
@@ -62,7 +78,8 @@ class InlineImageSlot {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _stream.removeListener(_listener);
+    _stream?.removeListener(_listener);
+    _stream = null;
     _frame?.dispose();
     _frame = null;
     _fallback.dispose();
