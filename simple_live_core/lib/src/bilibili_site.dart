@@ -1,3 +1,4 @@
+import 'common/native_quality.dart';
 import 'common/request_pool.dart';
 import 'dart:convert';
 import 'model/room_category_name.dart';
@@ -129,7 +130,9 @@ class BiliBiliSite implements LiveSite {
     List<LivePlayQuality> qualities = [];
     var result = await _takePlayInfo(detail.roomId);
     var qualitiesMap = <int, String>{};
+    final frameRates = <int, double?>{};
     for (var item in result["data"]["playurl_info"]["playurl"]["g_qn_desc"]) {
+      frameRates[int.tryParse(item["qn"].toString()) ?? 0] = metadataFrameRate(item);
       qualitiesMap[int.tryParse(item["qn"].toString()) ?? 0] =
           item["desc"].toString();
     }
@@ -139,6 +142,7 @@ class BiliBiliSite implements LiveSite {
       var qualityItem = LivePlayQuality(
         quality: qualitiesMap[item] ?? "未知清晰度",
         data: item,
+        frameRate: frameRates[item],
       );
       qualities.add(qualityItem);
     }

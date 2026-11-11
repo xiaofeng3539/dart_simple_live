@@ -1,5 +1,5 @@
 name: simple_live_app
-version: 2.0.21+24021
+version: 2.0.24+24024
 publish_to: none
 description: "Simple Live APP"
 environment:
@@ -9,7 +9,6 @@ dependencies:
   simple_live_core:
     path: ../simple_live_core
   # 图标
-  cupertino_icons: ^1.0.8
   remixicon: ^4.9.3 #Remix图标
 
   # 框架、工具
@@ -37,11 +36,6 @@ dependencies:
   flutter_smart_dialog: 4.9.8+10 #各种弹窗 Toast/Dialog/Popup
   sticky_headers: ^0.3.0+2 #吸顶
   lottie: ^3.3.2 #lottie动画
-  canvas_danmaku: ^0.3.3
-  # ns_danmaku: #弹幕
-  #   git:
-  #     url: https://github.com/xiaoyaocz/flutter_ns_danmaku.git
-  #     tag: v0.0.9
 
   #系统交互
   package_info_plus: ^9.0.0 #包信息
@@ -49,7 +43,6 @@ dependencies:
   url_launcher: ^6.3.2 #打开链接
   share_plus: ^12.0.1 #分享
   path_provider: ^2.1.5 #常用路径
-  cross_file: ^0.3.5 #跨平台文件
   permission_handler: ^12.0.3 #权限处理
   image_gallery_saver_plus: ^5.1.1 #图片保存到相册
   screen_brightness: ^2.1.7 #亮度控制
@@ -70,7 +63,6 @@ dependencies:
   shelf_web_socket: ^2.0.1
   web_socket_channel: ^3.0.3
   network_info_plus: ^7.0.0
-  signalr_netcore: ^1.4.4 #SignalR
 
   # 视频播放
   media_kit: ^1.2.2

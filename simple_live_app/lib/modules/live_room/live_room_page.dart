@@ -477,6 +477,11 @@ class LiveRoomPage extends StatelessWidget {
   }
 
   Widget buildMessageArea() {
+    void scrollToLatest() {
+      controller.disableAutoScroll.value = false;
+      controller.chatScrollToBottom();
+    }
+
     return Expanded(
       child: DefaultTabController(
         length: controller.site.id == Constant.kBiliBili ? 4 : 3,
@@ -514,22 +519,27 @@ class LiveRoomPage extends StatelessWidget {
                   Obx(
                     () => Stack(
                       children: [
-                        ListView.separated(
-                          controller: controller.scrollController,
-                          separatorBuilder: (_, i) => Obx(
-                            () => SizedBox(
-                              // *2与原来的EdgeInsets.symmetric(vertical: )做兼容
-                              height: AppSettingsController
-                                      .instance.chatTextGap.value *
-                                  2,
+                        GestureDetector(
+                          // 覆盖文字和空白处，双击与“最新”按钮保持相同行为。
+                          behavior: HitTestBehavior.opaque,
+                          onDoubleTap: scrollToLatest,
+                          child: ListView.separated(
+                            controller: controller.scrollController,
+                            separatorBuilder: (_, i) => Obx(
+                              () => SizedBox(
+                                // *2与原来的EdgeInsets.symmetric(vertical: )做兼容
+                                height: AppSettingsController
+                                        .instance.chatTextGap.value *
+                                    2,
+                              ),
                             ),
+                            padding: AppStyle.edgeInsetsA12,
+                            itemCount: controller.messages.length,
+                            itemBuilder: (_, i) {
+                              var item = controller.messages[i];
+                              return buildMessageItem(item);
+                            },
                           ),
-                          padding: AppStyle.edgeInsetsA12,
-                          itemCount: controller.messages.length,
-                          itemBuilder: (_, i) {
-                            var item = controller.messages[i];
-                            return buildMessageItem(item);
-                          },
                         ),
                         Visibility(
                           visible: controller.disableAutoScroll.value,
@@ -537,10 +547,7 @@ class LiveRoomPage extends StatelessWidget {
                             right: 12,
                             bottom: 12,
                             child: ElevatedButton.icon(
-                              onPressed: () {
-                                controller.disableAutoScroll.value = false;
-                                controller.chatScrollToBottom();
-                              },
+                              onPressed: scrollToLatest,
                               icon: const Icon(Icons.expand_more),
                               label: const Text("最新"),
                             ),

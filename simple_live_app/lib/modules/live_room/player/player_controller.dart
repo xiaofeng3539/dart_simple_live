@@ -21,6 +21,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/system_proxy_service.dart';
 import 'package:simple_live_app/services/native_refresh_controller.dart';
+import 'package:simple_live_app/services/playback_diagnostics.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -28,6 +29,8 @@ mixin PlayerMixin {
   GlobalKey<VideoState> globalPlayerKey = GlobalKey<VideoState>();
   GlobalKey globalDanmuKey = GlobalKey();
   Future<void>? _playerInitialization;
+  PlaybackDiagnostics? playbackDiagnostics;
+  void playbackSample(PlaybackSnapshot sample) {}
 
   /// 播放器实例
   late final player = Player(
@@ -76,6 +79,10 @@ mixin PlayerMixin {
     // 起播先积累少量数据，避免刚出画面就因缓存耗尽而停顿。
     await pp.setProperty('cache-pause-initial', 'yes');
     await pp.setProperty('network-timeout', '10');
+    playbackDiagnostics ??= PlaybackDiagnostics(
+      read: (key) => pp.getProperty(key, waitForInitialization: false),
+      onSample: playbackSample,
+    );
     // 设置音频输出驱动
     if (AppSettingsController.instance.customPlayerOutput.value) {
       if (player.platform is NativePlayer) {
@@ -815,6 +822,8 @@ class PlayerController extends BaseController
   NativeRefreshController? _nativeRefresh;
   StreamSubscription<Tracks>? _sourceTracks;
 
+  double get nativeDisplayHz => _nativeRefresh?.displayHz.value ?? 0;
+
   void initNativeRefresh() {
     if (_nativeRefresh != null || _playerClosing) return;
     final refresh = _nativeRefresh = NativeRefreshController();
@@ -844,6 +853,7 @@ class PlayerController extends BaseController
     });
 
     _playingSubscription = player.stream.playing.listen((event) {
+      playbackDiagnostics?.setPlaying(event);
       if (event) {
         WakelockPlus.enable();
         Log.d("Playing");
@@ -877,6 +887,7 @@ class PlayerController extends BaseController
   }
 
   void disposeStream() {
+    playbackDiagnostics?.dispose();
     _sourceTracks?.cancel();
     final refresh = _nativeRefresh;
     _nativeRefresh = null;
@@ -918,6 +929,19 @@ class PlayerController extends BaseController
             subtitle: Text('直播源 ${refresh.sourceFps.value > 0 ? '${refresh.sourceFps.value.toStringAsFixed(2)} fps' : '读取中'} · '
                 '屏幕 ${refresh.displayHz.value > 0 ? '${refresh.displayHz.value.toStringAsFixed(2)} Hz' : '系统管理'} · 插帧关闭'),
           )),
+          if (playbackDiagnostics != null) Obx(() {
+            final sample = playbackDiagnostics!.snapshot.value;
+            String fps(double? v) => v == null ? '未提供' : '${v.toStringAsFixed(2)} fps';
+            return ListTile(
+              title: const Text('实时播放统计（每秒更新）'),
+              subtitle: Text('源帧率（解复用器）：${fps(sample.sourceFps)}\n'
+                '解码/滤镜输出估计：${fps(sample.outputFps)}\n'
+                '渲染呈现帧率：当前后端未提供，不能用屏幕 Hz 代替\n'
+                '输出丢帧：${sample.voDrops ?? '未提供'} · 解码丢帧：${sample.decoderDrops ?? '未提供'}\n'
+                '当前硬解码：${sample.hardwareDecoder.isEmpty ? '未提供' : sample.hardwareDecoder}\n'
+                '预读缓存：${sample.cacheSeconds?.toStringAsFixed(2) ?? '未提供'} 秒'),
+            );
+          }),
           ListTile(
             title: const Text("Resolution"),
             subtitle: Text('${player.state.width}x${player.state.height}'),

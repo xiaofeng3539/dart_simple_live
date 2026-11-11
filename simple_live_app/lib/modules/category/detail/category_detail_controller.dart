@@ -78,8 +78,6 @@ class CategoryDetailController extends BasePageController<LiveRoomItem> {
     if (_closed) return;
     _closed = true;
     ++_generation;
-    scrollController.dispose();
-    easyRefreshController.dispose();
     super.onClose();
   }
 }

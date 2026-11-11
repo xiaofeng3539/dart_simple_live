@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:simple_live_app/services/room_emoticons.dart';
+import 'package:simple_live_app/services/playback_diagnostics.dart';
 import 'package:simple_live_app/widgets/live_message_content.dart';
 import 'dart:io';
 
@@ -76,6 +77,64 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   /// 当前清晰度
   var currentQuality = -1;
+  bool _nativeAutoSelection = false;
+  final _nativeDropGuard = PlaybackDropGuard();
+  List<NativeHlsVariant> _nativeVariants = [];
+  int? _nativeFallbackFrom;
+  double? _nativeFpsCeiling;
+  final _qualityFallbacks = <int>{};
+
+  @override
+  void playbackSample(PlaybackSnapshot sample) {
+    if (!_nativeAutoSelection || !AppSettingsController.instance.preferNativeFrameRate.value ||
+        _roomClosed || isBackground ||
+        !hasPlayed.value || _recoveringPlayback || !player.state.playing) {
+      _nativeDropGuard.reset();
+      return;
+    }
+    if (!_nativeDropGuard.add(sample, sample.elapsed,
+        buffering: player.state.buffering)) {
+      return;
+    }
+    final fps = sample.sourceFps;
+    if (fps == null) return;
+    final variant = chooseNativeHlsVariant(_nativeVariants,
+        displayHz: nativeDisplayHz, maxFrameRate: fps - 1);
+    if (variant != null && variant.frameRate >= 59 &&
+        (playUrls.isEmpty || variant.uri.toString() != playUrls[currentLineIndex])) {
+      // Reuse the already parsed manifest; do not probe the network on every sample.
+      playUrls.value = _nativeVariants
+          .where((v) => (v.frameRate - variant.frameRate).abs() < 0.01)
+          .map((v) => v.uri.toString()).toSet().toList();
+      playUrls.remove(variant.uri.toString());
+      playUrls.insert(0, variant.uri.toString());
+      currentLineIndex = 0;
+      _nativeFpsCeiling = variant.frameRate;
+      currentQualityInfo.value = 'HLS · ${variant.frameRate.toStringAsFixed(2)}fps（清单标称）';
+      _nativeDropGuard.reset();
+      unawaited(setPlayer());
+      return;
+    }
+    var candidate = -1;
+    var best = 0.0;
+    for (var i = 0; i < qualites.length; i++) {
+      final rate = nativeFrameRate(qualites[i].frameRate);
+      if (i == currentQuality || _qualityFallbacks.contains(i) || rate == null ||
+          rate >= fps - 1 || rate < 59 ||
+          (nativeDisplayHz > 0 && rate > nativeDisplayHz + 1)) {
+        continue;
+      }
+      if (rate > best) { candidate = i; best = rate; }
+    }
+    if (candidate < 0) return;
+    _qualityFallbacks.add(currentQuality);
+    _nativeFallbackFrom = currentQuality;
+    currentQuality = candidate;
+    _nativeDropGuard.reset();
+    Log.d('持续丢帧，自动回退到已知原生帧率档位：${qualites[candidate].quality}');
+    getPlayUrl();
+  }
+
   var currentQualityInfo = "".obs;
 
   /// 线路数据
@@ -592,6 +651,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         roomOffline.value ||
         detail.value == null) return;
     qualites.clear();
+    _qualityFallbacks.clear();
+    _nativeFpsCeiling = null;
+    _nativeDropGuard.reset();
     currentQuality = -1;
 
     try {
@@ -606,6 +668,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       _markOpen('清晰度');
       var qualityLevel = await getQualityLevel();
       if (!_isCurrentRequest(request)) return;
+      _nativeAutoSelection = AppSettingsController.instance.preferNativeFrameRate.value;
       if (qualityLevel == 2) {
         //最高
         currentQuality = 0;
@@ -618,6 +681,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         currentQuality = middle;
       }
 
+      if (_nativeAutoSelection) {
+        currentQuality = preferredNativeQuality(playQualites,
+            fallback: currentQuality, displayHz: nativeDisplayHz);
+      }
       getPlayUrl(request: request);
     } catch (e) {
       if (!_isCurrentRequest(request)) return;
@@ -656,19 +723,36 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       return;
     }
     final quality = qualites[currentQuality];
+    final fallbackFrom = _nativeFallbackFrom;
+    _nativeFallbackFrom = null;
     final roomDetail = detail.value!;
     try {
-      final playUrl = await _retryPlayRequest(() async {
+      var playUrl = await _retryPlayRequest(() async {
         final result = await site.liveSite
             .getPlayUrls(detail: roomDetail, quality: quality);
         if (result.urls.isEmpty) throw StateError('播放地址列表为空');
         return result;
       }, currentRequest);
       if (!_isCurrentRequest(currentRequest)) return;
+      // Manual quality choices are never replaced by automatic master selection.
+      if (_nativeAutoSelection && AppSettingsController.instance.preferNativeFrameRate.value) {
+        final qualityCap = fallbackFrom != null ? nativeFrameRate(quality.frameRate) : null;
+        final fallbackFps = qualityCap != null && (_nativeFpsCeiling == null || qualityCap < _nativeFpsCeiling!)
+            ? qualityCap : _nativeFpsCeiling;
+        final ceiling = fallbackFps != null && (nativeDisplayHz <= 0 || fallbackFps < nativeDisplayHz)
+            ? fallbackFps : nativeDisplayHz;
+        playUrl = await preferNativeHls(playUrl, displayHz: ceiling, maxFrameRate: fallbackFps);
+        if (playUrl.urls.isEmpty) throw StateError('此清单没有符合稳定播放要求的帧率档位');
+        if (fallbackFps != null && _isCurrentRequest(currentRequest)) _nativeFpsCeiling = fallbackFps;
+        if (!_isCurrentRequest(currentRequest)) return;
+      }
+      _nativeVariants = playUrl.nativeVariants;
       playUrls.value = playUrl.urls;
       _markOpen('地址');
       playHeaders = playUrl.headers;
-      currentQualityInfo.value = quality.quality;
+      final variant = playUrl.selectedNativeVariant;
+      currentQualityInfo.value = variant == null ? quality.quality
+          : 'HLS · ${variant.frameRate.toStringAsFixed(2)}fps（清单标称）';
       currentLineIndex = 0;
       currentLineInfo.value = "线路1";
       mediaErrorRetryCount = 0;
@@ -676,6 +760,13 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       initPlaylist(currentRequest);
     } catch (e) {
       if (!_isCurrentRequest(currentRequest)) return;
+      if (fallbackFrom != null) {
+        _qualityFallbacks.add(currentQuality);
+        currentQuality = fallbackFrom;
+        _nativeDropGuard.reset();
+        Log.d('自动降档未取得可用流，保留原连接');
+        return;
+      }
       Log.logPrint(e);
       if (site.id == Constant.kHuya && e is StateError) {
         errorMsg.value = e.message.toString();
@@ -729,6 +820,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         await configurePlaybackProxy(url);
         if (!_isCurrentRequest(request) || currentLineIndex != lineIndex) return;
         hasPlayed.value = false;
+        playbackDiagnostics?.reset();
+        _nativeDropGuard.reset();
         _markOpen('提交开流');
         await player.open(Media(url, httpHeaders: headers));
       } catch (e) {
@@ -818,11 +911,17 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         final line = currentLineIndex;
         final oldUri = Uri.tryParse(playUrls[line]);
         try {
-          final fresh = await site.liveSite.getPlayUrls(
+          var fresh = await site.liveSite.getPlayUrls(
               detail: detail.value!, quality: qualites[currentQuality])
               .timeout(const Duration(seconds: 4));
           if (!stillStalled()) return;
+          if (_nativeAutoSelection && AppSettingsController.instance.preferNativeFrameRate.value) {
+            fresh = await preferNativeHls(fresh,
+                displayHz: nativeDisplayHz, maxFrameRate: _nativeFpsCeiling);
+            if (!stillStalled()) return;
+          }
           if (fresh.urls.isNotEmpty) {
+            _nativeVariants = fresh.nativeVariants;
             final sameLine = fresh.urls.indexWhere((url) {
               final uri = Uri.tryParse(url);
               return uri?.host == oldUri?.host && uri?.path == oldUri?.path;
@@ -1113,6 +1212,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         groupValue: currentQuality,
         onChanged: (e) {
           Get.back();
+          _nativeFallbackFrom = null;
+          _nativeFpsCeiling = null;
+          _nativeAutoSelection = false;
+          _nativeDropGuard.reset();
           currentQuality = e ?? 0;
           getPlayUrl();
         },

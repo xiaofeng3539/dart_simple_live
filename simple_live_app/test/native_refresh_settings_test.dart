@@ -10,18 +10,13 @@ class _Settings extends AppSettingsController {
 }
 
 void main() {
-  testWidgets(
-      'refresh setting reports system management without mode-switch controls',
-      (tester) async {
+  testWidgets('settings omit the informational refresh row and retain native FPS control', (tester) async {
     Get.put<AppSettingsController>(_Settings());
     try {
       await tester.pumpWidget(const GetMaterialApp(home: PlaySettingsPage()));
-      expect(find.text('屏幕刷新率'), findsOneWidget);
-      expect(find.text('系统管理'), findsOneWidget);
-      await tester.tap(find.text('屏幕刷新率'));
-      await tester.pumpAndSettle();
-      expect(find.text('120Hz'), findsNothing);
-      expect(find.textContaining('不改变直播源帧率'), findsOneWidget);
+      expect(find.text('屏幕刷新率'), findsNothing);
+      expect(find.text('系统管理'), findsNothing);
+      expect(find.text('原生高帧率优先'), findsOneWidget);
     } finally {
       Get.reset();
     }

@@ -866,6 +866,7 @@ class DouyinSite implements LiveSite {
           var qualityItem = LivePlayQuality(
             quality: quality["name"],
             sort: level,
+            frameRate: metadataFrameRate(quality),
             data: urls,
           );
           if (urls.isNotEmpty) {
@@ -894,6 +895,7 @@ class DouyinSite implements LiveSite {
           var qualityItem = LivePlayQuality(
             quality: quality["name"],
             sort: quality["level"],
+            frameRate: metadataFrameRate(quality) ?? _streamFrameRate(qualityData[quality["sdk_key"]]?["main"]),
             data: urls,
           );
           if (urls.isNotEmpty) {
@@ -911,6 +913,17 @@ class DouyinSite implements LiveSite {
     qualities.sort((a, b) => b.sort.compareTo(a.sort));
     _logDebug("获取到的画质列表: ${qualities.map((q) => q.quality).toList()}");
     return qualities;
+  }
+
+  double? _streamFrameRate(dynamic main) {
+    final direct = metadataFrameRate(main);
+    if (direct != null || main is! Map) return direct;
+    final params = main['sdk_params'];
+    try {
+      return metadataFrameRate(params is String ? json.decode(params) : params);
+    } on FormatException {
+      return null;
+    }
   }
 
   @override

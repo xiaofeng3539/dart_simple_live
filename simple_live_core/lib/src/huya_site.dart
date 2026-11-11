@@ -11,8 +11,6 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:simple_live_core/src/model/tars/get_cdn_token_ex_req.dart';
 import 'package:simple_live_core/src/model/tars/get_cdn_token_ex_resp.dart';
-import 'package:simple_live_core/src/model/tars/get_cdn_token_req.dart';
-import 'package:simple_live_core/src/model/tars/get_cdn_token_resp.dart';
 import 'package:simple_live_core/src/model/tars/huya_user_id.dart';
 import 'package:tars_dart/tars/net/base_tars_http.dart';
 
@@ -154,42 +152,7 @@ class HuyaSite implements LiveSite {
         HuyaBitRateModel(name: "高清", bitRate: 2000),
       ];
     }
-    // if (urlData.lines.isEmpty) {
-    //   urlData.lines = [
-    //     HuyaLineModel(line: "tx.flv.huya.com", lineType: HuyaLineType.flv,),
-    //     HuyaLineModel(line: "bd.flv.huya.com", lineType: HuyaLineType.flv),
-    //     HuyaLineModel(line: "al.flv.huya.com", lineType: HuyaLineType.flv),
-    //     HuyaLineModel(line: "hw.flv.huya.com", lineType: HuyaLineType.flv),
-    //   ];
-    // }
-    //var url = getRealUrl(urlData.url);
-
     for (var item in urlData.bitRates) {
-      // var urls = <String>[];
-      // for (var line in urlData.lines) {
-      //   var src = line.line;
-      //   src += "/${line.streamName}";
-      //   if (line.lineType == HuyaLineType.flv) {
-      //     //src = src.replaceAll(".m3u8", ".flv");
-      //     src += ".flv";
-      //   }
-      //   if (line.lineType == HuyaLineType.hls) {
-      //     src += ".m3u8";
-      //   }
-      //   var parms = processAnticode(
-      //     line.lineType == HuyaLineType.flv
-      //         ? line.flvAntiCode
-      //         : line.hlsAntiCode,
-      //     urlData.uid,
-      //     line.streamName,
-      //   );
-      //   src += "?$parms";
-      //   if (item.bitRate > 0) {
-      //     src += "&ratio=${item.bitRate}";
-      //   }
-      //   urls.add(src);
-      // }
-
       qualities.add(
         LivePlayQuality(
           data: {
@@ -200,6 +163,7 @@ class HuyaSite implements LiveSite {
             "codec": item.codecType == 1 && item.bitRate != 14000 ? 265 : 264,
           },
           quality: item.name,
+          frameRate: item.frameRate,
         ),
       );
     }
@@ -591,6 +555,7 @@ class HuyaSite implements LiveSite {
             bitRate: item["iBitRate"] ?? 0,
             name: name,
             codecType: item["iCodecType"] ?? 0,
+            frameRate: metadataFrameRate(item),
           ),
         );
       }
@@ -719,6 +684,7 @@ class HuyaSite implements LiveSite {
           bitRate: item["iBitRate"],
           name: name,
           codecType: item["iCodecType"] ?? 0,
+          frameRate: metadataFrameRate(item),
         ),
       );
     }
@@ -1082,11 +1048,13 @@ class HuyaBitRateModel {
   final String name;
   final int bitRate;
   final int codecType;
+  final double? frameRate;
 
   HuyaBitRateModel({
     required this.bitRate,
     required this.name,
     this.codecType = 0,
+    this.frameRate,
   });
 
   @override

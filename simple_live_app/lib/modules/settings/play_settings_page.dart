@@ -42,15 +42,14 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     },
                   ),
                 ),
+                AppStyle.divider,
+                Obx(() => SettingsSwitch(
+                  title: '原生高帧率优先',
+                  subtitle: '自动选流优先已知帧率，1080P 120fps 优于 4K 60fps。不插帧；未知帧率保留原有画质偏好，直播间手动选择后停止自动调整。',
+                  value: controller.preferNativeFrameRate.value,
+                  onChanged: controller.setPreferNativeFrameRate,
+                )),
                 if (Platform.isAndroid) AppStyle.divider,
-                if (Platform.isWindows || Platform.isAndroid) ...[
-                  const ListTile(
-                    title: Text('屏幕刷新率'),
-                    subtitle: Text('跟随系统设置（60/90/120Hz 等），不在进出直播间时切换显示模式。不改变直播源帧率，不插帧。'),
-                    trailing: Text('系统管理'),
-                  ),
-                  AppStyle.divider,
-                ],
                 Obx(
                   () => Visibility(
                     visible: Platform.isAndroid,
@@ -64,22 +63,6 @@ class PlaySettingsPage extends GetView<AppSettingsController> {
                     ),
                   ),
                 ),
-                // AppStyle.divider,
-                // Obx(
-                //   () => SettingsNumber(
-                //     title: "缓冲区大小",
-                //     subtitle: "若播放卡顿可尝试调高此选项",
-                //     value: controller.playerBufferSize.value,
-                //     min: 32,
-                //     max: 1024,
-                //     step: 4,
-                //     unit: "MB",
-                //     onChanged: (e) {
-                //       controller.setPlayerBufferSize(e);
-                //     },
-                //   ),
-                // ),
-                AppStyle.divider,
                 Obx(
                   () => SettingsSwitch(
                     title: "进入后台自动暂停",

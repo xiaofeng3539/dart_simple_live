@@ -45,6 +45,8 @@ class AppSettingsController extends GetxController {
     danmuFontWeight.value = LocalStorageService.instance
         .getValue(LocalStorageService.kDanmuFontWeight, 4);
 
+    preferNativeFrameRate.value = LocalStorageService.instance
+        .getValue(LocalStorageService.kPreferNativeFrameRate, true);
     hardwareDecode.value = LocalStorageService.instance
         .getValue(LocalStorageService.kHardwareDecode, true);
     chatTextSize.value = LocalStorageService.instance
@@ -242,6 +244,12 @@ class AppSettingsController extends GetxController {
     if (Get.isRegistered<WindowAppearanceController>()) {
       Get.find<WindowAppearanceController>().apply();
     }
+  }
+
+  final preferNativeFrameRate = true.obs;
+  void setPreferNativeFrameRate(bool value) {
+    preferNativeFrameRate.value = value;
+    LocalStorageService.instance.setValue(LocalStorageService.kPreferNativeFrameRate, value);
   }
 
   var hardwareDecode = true.obs;

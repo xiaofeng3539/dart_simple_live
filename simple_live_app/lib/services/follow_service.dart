@@ -19,7 +19,7 @@ import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
-class FollowService extends GetxService {
+class FollowService extends GetxService with WidgetsBindingObserver {
   StreamSubscription<dynamic>? subscription;
   static FollowService get instance => Get.find<FollowService>();
 
@@ -52,16 +52,44 @@ class FollowService extends GetxService {
   // A reload invalidates every outstanding response, including reloads without I/O.
   int _refreshRevision = 0;
   bool _closed = false;
+  bool _wasAway = false;
+  bool _foregroundRefreshPending = false;
   FollowUserTag? _selectedTag;
   final Map<FollowUser, Object> _statusRequests = Map.identity();
 
   @override
   void onInit() {
+    WidgetsBinding.instance.addObserver(this);
     subscription = EventBus.instance.listen(Constant.kUpdateFollow, (p0) {
       loadData(updateStatus: false);
     });
     initTimer();
     super.onInit();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      _wasAway = true;
+      return;
+    }
+    if (!_wasAway) return;
+    _wasAway = false;
+    // 桌面窗口重新获得焦点、手机从后台返回共用同一入口。
+    // 合并重复事件，不打断已经进行中的开播状态查询。
+    if (_closed || updating.value || _foregroundRefreshPending) return;
+    unawaited(_refreshOnForeground());
+  }
+
+  Future<void> _refreshOnForeground() async {
+    _foregroundRefreshPending = true;
+    try {
+      await loadData();
+    } catch (error) {
+      Log.logPrint('回到前台刷新关注失败：$error');
+    } finally {
+      _foregroundRefreshPending = false;
+    }
   }
 
   // 添加标签
@@ -501,6 +529,7 @@ class FollowService extends GetxService {
 
   @override
   void onClose() {
+    WidgetsBinding.instance.removeObserver(this);
     _closed = true;
     _refreshRevision++;
     _statusRequests.clear();

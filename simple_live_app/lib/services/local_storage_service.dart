@@ -3,6 +3,7 @@ import 'package:hive/hive.dart';
 import 'package:simple_live_app/app/log.dart';
 
 class LocalStorageService extends GetxService {
+  static const kPreferNativeFrameRate = "PreferNativeFrameRate";
   static LocalStorageService get instance => Get.find<LocalStorageService>();
 
   /// 首次运行

@@ -25,3 +25,6 @@ export 'src/model/live_play_url.dart';
 export 'src/model/live_emoticon.dart';
 export 'src/danmaku/platform_emoticons.dart';
 export 'src/danmaku/emoticon_seeds.dart';
+
+export 'src/common/native_quality.dart';
+export 'src/common/native_hls_resolver.dart';

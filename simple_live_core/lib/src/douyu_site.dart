@@ -1,3 +1,4 @@
+import 'common/native_quality.dart';
 import 'common/request_pool.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -134,6 +135,7 @@ class DouyuSite implements LiveSite {
         LivePlayQuality(
           quality: item["name"].toString(),
           data: DouyuPlayData(item["rate"], cdns),
+          frameRate: metadataFrameRate(item),
         ),
       );
     }
