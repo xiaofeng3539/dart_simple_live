@@ -115,11 +115,13 @@ class _PlayerBufferingHintState extends State<PlayerBufferingHint> {
 Widget playerControls(
   VideoState videoState,
   LiveRoomController controller,
-) {  return Obx(() {
+) {
+  return Obx(() {
     final controls = controller.fullScreenState.value
         ? buildFullControls(videoState, controller)
         : buildControls(
-            MediaQuery.orientationOf(videoState.context) == Orientation.portrait,
+            MediaQuery.orientationOf(videoState.context) ==
+                Orientation.portrait,
             videoState,
             controller,
           );
@@ -136,23 +138,49 @@ Widget playerControls(
           }
         },
       ),
-      child: controls,
+      child: !Platform.isAndroid && !Platform.isIOS
+          ? Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerSignal: (event) =>
+                  _onVolumePointerSignal(event, controller, null),
+              child: controls,
+            )
+          : controls,
     );
   });
+}
+
+bool _editingTextOrModifiedShortcut() {
+  final keyboard = HardwareKeyboard.instance;
+  final focusContext = FocusManager.instance.primaryFocus?.context;
+  final editable = focusContext?.widget is EditableText
+      ? focusContext!.widget as EditableText
+      : focusContext?.findAncestorWidgetOfExactType<EditableText>();
+  return keyboard.isControlPressed ||
+      keyboard.isAltPressed ||
+      keyboard.isMetaPressed ||
+      (editable != null && !editable.readOnly);
 }
 
 KeyEventResult handlePlayerShortcut(
   KeyEvent event, {
   required VoidCallback onToggleDanmaku,
   required VoidCallback onToggleFullscreen,
+  VoidCallback? onRefresh,
 }) {
-  if (event is! KeyDownEvent) return KeyEventResult.ignored;
+  if (event is! KeyDownEvent || _editingTextOrModifiedShortcut()) {
+    return KeyEventResult.ignored;
+  }
   if (event.logicalKey == LogicalKeyboardKey.keyD) {
     onToggleDanmaku();
     return KeyEventResult.handled;
   }
   if (event.logicalKey == LogicalKeyboardKey.keyF) {
     onToggleFullscreen();
+    return KeyEventResult.handled;
+  }
+  if (event.logicalKey == LogicalKeyboardKey.keyR && onRefresh != null) {
+    onRefresh();
     return KeyEventResult.handled;
   }
   return KeyEventResult.ignored;
@@ -168,11 +196,13 @@ void _onVolumePointerSignal(
   LiveRoomController controller,
   BuildContext? targetContext,
 ) {
-  if (event is PointerScrollEvent) {
-    adjustVolumeOnScroll(event, controller);
-    if (targetContext != null) {
-      controller.showVolumeSlider(targetContext);
-    }
+  if (event is PointerScrollEvent && event.scrollDelta.dy != 0) {
+    // The volume icon also receives this event. Resolve at the deepest listener
+    // so a single wheel tick cannot adjust both icon and video-area volume.
+    GestureBinding.instance.pointerSignalResolver.register(event, (signal) {
+      adjustVolumeOnScroll(signal, controller);
+      if (targetContext != null) controller.showVolumeSlider(targetContext);
+    });
   }
 }
 
@@ -180,7 +210,7 @@ void adjustVolumeOnScroll(
   PointerSignalEvent event,
   LiveRoomController controller,
 ) {
-  if (event is! PointerScrollEvent) return;
+  if (event is! PointerScrollEvent || event.scrollDelta.dy == 0) return;
   final settings = AppSettingsController.instance;
   final volume = volumeAfterScroll(
     settings.playerVolume.value,
@@ -246,9 +276,17 @@ Widget buildFullControls(
               }
               showFollowUser(controller);
             },
-            onVerticalDragStart: controller.onVerticalDragStart,
-            onVerticalDragUpdate: controller.onVerticalDragUpdate,
-            onVerticalDragEnd: controller.onVerticalDragEnd,
+            // Mobile brightness/volume drags otherwise steal mouse double taps
+            // as soon as the cursor moves a few pixels while pressed.
+            onVerticalDragStart: Platform.isAndroid || Platform.isIOS
+                ? controller.onVerticalDragStart
+                : null,
+            onVerticalDragUpdate: Platform.isAndroid || Platform.isIOS
+                ? controller.onVerticalDragUpdate
+                : null,
+            onVerticalDragEnd: Platform.isAndroid || Platform.isIOS
+                ? controller.onVerticalDragEnd
+                : null,
             child: MouseRegion(
               onHover: (PointerHoverEvent event) {
                 controller.onHover(event, videoState.context);
@@ -632,9 +670,15 @@ Widget buildControls(
         child: GestureDetector(
           onTap: controller.onTap,
           onDoubleTap: controller.onDoubleTap,
-          onVerticalDragStart: controller.onVerticalDragStart,
-          onVerticalDragUpdate: controller.onVerticalDragUpdate,
-          onVerticalDragEnd: controller.onVerticalDragEnd,
+          onVerticalDragStart: Platform.isAndroid || Platform.isIOS
+              ? controller.onVerticalDragStart
+              : null,
+          onVerticalDragUpdate: Platform.isAndroid || Platform.isIOS
+              ? controller.onVerticalDragUpdate
+              : null,
+          onVerticalDragEnd: Platform.isAndroid || Platform.isIOS
+              ? controller.onVerticalDragEnd
+              : null,
           //onLongPress: controller.showDebugInfo,
           child: MouseRegion(
             onEnter: controller.onEnter,

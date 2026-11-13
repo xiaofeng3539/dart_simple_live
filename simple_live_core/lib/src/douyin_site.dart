@@ -36,6 +36,7 @@ class DouyinSite implements LiveSite {
   String _cookie = "";
   String? _visitorCookie;
   Future<String>? _visitorCookieRequest;
+  Map<String, dynamic>? _recommendHeaders;
   final Map<String, String> _webPartitionNames = {};
   Future<List<LiveCategory>>? _followCategoryRequest;
 
@@ -44,6 +45,7 @@ class DouyinSite implements LiveSite {
     if (_cookie == value) return;
     _cookie = value;
     _visitorCookie = null;
+    _recommendHeaders = null;
   }
 
   void _logDebug(String msg) {
@@ -120,7 +122,9 @@ class DouyinSite implements LiveSite {
       if (node is! Map) return;
       final partition = node['partition'];
       final id = partition is Map ? douyinWebPartitionId(partition) : null;
-      final title = partition is Map ? firstCategoryName([partition['title']]) : null;
+      final title = partition is Map
+          ? firstCategoryName([partition['title']])
+          : null;
       if (id != null && title != null) _webPartitionNames[id] = title;
       final children = node['sub_partition'];
       if (children is List) {
@@ -283,6 +287,14 @@ class DouyinSite implements LiveSite {
 
   @override
   Future<LiveCategoryResult> getRecommendRooms({int page = 1}) async {
+    // Room validation may renew the visitor cookie. Changing that cookie
+    // between recommendation pages resets the upstream feed to its first batch,
+    // even with a nonzero offset. Pin this feed's session until refresh/account
+    // change; room validation can still renew its own session independently.
+    if (page == 1 || _recommendHeaders == null) {
+      _recommendHeaders = await getRequestHeaders();
+    }
+    final recommendHeaders = _recommendHeaders!;
     String serverUrl =
         "https://live.douyin.com/webcast/web/partition/detail/room/v2/";
     var uri = Uri.parse(serverUrl).replace(
@@ -317,7 +329,7 @@ class DouyinSite implements LiveSite {
     var result = await HttpClient.instance.getJson(
       requestUrl,
       header: {
-        ...await getRequestHeaders(),
+        ...recommendHeaders,
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache',
       },
@@ -367,14 +379,26 @@ class DouyinSite implements LiveSite {
     if (items.isEmpty && failures > 0) {
       throw CoreError('抖音推荐直播状态校验失败，请稍后刷新');
     }
-    return LiveCategoryResult(hasMore: rows.length >= 15, items: items);
+    // A short recommendation batch or an all-offline filtered batch does not
+    // mean the feed is exhausted. Prefer an explicit flag when available.
+    final more = data['has_more'];
+    final hasMore = more == null
+        ? rows.isNotEmpty
+        : more == true || more == 1 || more == '1';
+    return LiveCategoryResult(hasMore: hasMore, items: items);
   }
 
   @override
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) =>
-      _roomRequests.run(roomId, () => _loadRoomDetail(roomId));
+      _roomRequests.run(jsonEncode([cookie, roomId]), () => _loadRoomDetail(roomId));
 
   final _roomRequests = InFlightRequests<LiveRoomDetail>();
+
+  @override
+  Future<LiveRoomDetail> refreshRoomDetail({required String roomId}) {
+    _roomRequests.invalidate(jsonEncode([cookie, roomId]));
+    return getRoomDetail(roomId: roomId);
+  }
 
   Future<LiveRoomDetail> _loadRoomDetail(String roomId) async {
     // 有两种roomId，一种是webRid，一种是roomId
@@ -493,7 +517,12 @@ class DouyinSite implements LiveSite {
     if (status == null) throw StateError('抖音房间未返回直播状态');
     if (status != 2) {
       // A confirmed offline response is complete even without stream/owner fields.
-      return _offlineRoomDetail(webRid, roomData, userData ?? roomData['owner'], data);
+      return _offlineRoomDetail(
+        webRid,
+        roomData,
+        userData ?? roomData['owner'],
+        data,
+      );
     }
     var roomId = roomData["id_str"].toString();
 
@@ -539,14 +568,24 @@ class DouyinSite implements LiveSite {
     );
   }
 
-  LiveRoomDetail _offlineRoomDetail(String webRid, Map room, dynamic user, Map context) {
+  LiveRoomDetail _offlineRoomDetail(
+    String webRid,
+    Map room,
+    dynamic user,
+    Map context,
+  ) {
     final partition = douyinWebPartition(room, context);
     final avatars = user?['avatar_thumb']?['url_list'];
     return LiveRoomDetail(
-      roomId: webRid, status: false, online: 0,
-      title: room['title']?.toString() ?? '', cover: '',
+      roomId: webRid,
+      status: false,
+      online: 0,
+      title: room['title']?.toString() ?? '',
+      cover: '',
       userName: user?['nickname']?.toString() ?? '',
-      userAvatar: avatars is List && avatars.isNotEmpty ? avatars.first.toString() : '',
+      userAvatar: avatars is List && avatars.isNotEmpty
+          ? avatars.first.toString()
+          : '',
       url: 'https://live.douyin.com/$webRid',
       categoryName: douyinCategoryName(room, context),
       categoryId: douyinWebPartitionId(partition),
@@ -575,7 +614,12 @@ class DouyinSite implements LiveSite {
     final status = int.tryParse(room['status']?.toString() ?? '');
     if (status == null) throw StateError('抖音网页未返回直播状态');
     if (status != 2) {
-      return _offlineRoomDetail(webRid, room, anchor ?? owner, roomData['roomStore']['roomInfo']);
+      return _offlineRoomDetail(
+        webRid,
+        room,
+        anchor ?? owner,
+        roomData['roomStore']['roomInfo'],
+      );
     }
     var roomStatus = status == 2;
 
@@ -895,7 +939,9 @@ class DouyinSite implements LiveSite {
           var qualityItem = LivePlayQuality(
             quality: quality["name"],
             sort: quality["level"],
-            frameRate: metadataFrameRate(quality) ?? _streamFrameRate(qualityData[quality["sdk_key"]]?["main"]),
+            frameRate:
+                metadataFrameRate(quality) ??
+                _streamFrameRate(qualityData[quality["sdk_key"]]?["main"]),
             data: urls,
           );
           if (urls.isNotEmpty) {

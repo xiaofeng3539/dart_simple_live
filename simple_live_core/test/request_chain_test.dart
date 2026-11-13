@@ -61,6 +61,14 @@ Map<String, dynamic> playInfo(String token) => {
   },
 };
 void main() {
+  test('Bili explicit refresh bypasses in-flight room detail coalescing', () async {
+    final site = _Bili();
+    final old = site.getRoomDetail(roomId: '1');
+    final fresh = site.refreshRoomDetail(roomId: '1');
+    expect(site.calls, 2);
+    site.gate.complete();
+    await Future.wait([old, fresh]);
+  });
   late Dio original;
   setUp(() {
     CoreLog.enableLog = false;
@@ -70,6 +78,38 @@ void main() {
   tearDown(() {
     core.HttpClient.instance.dio.close();
     core.HttpClient.instance.dio = original;
+  });
+  test('Bili prefetch and cached playback URLs are isolated by account', () async {
+    final site = _Bili()..cookie = 'account-a';
+    var calls = 0;
+    core.HttpClient.instance.dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (request, handler) {
+        calls++;
+        handler.resolve(Response(requestOptions: request, data: playInfo(site.cookie)));
+      },
+    ));
+    site.prefetchRoom('1');
+    await Future<void>.delayed(Duration.zero);
+    site.cookie = 'account-b';
+    final qualities = await site.getPlayQualites(detail: room());
+    final selected = await site.getPlayUrls(detail: room(), quality: qualities.first);
+    expect(selected.urls.first, contains('account-b'));
+    expect(calls, 2);
+    site.cookie = 'account-c';
+    await site.getPlayQualites(detail: room());
+    site.cookie = 'account-d';
+    final changed = await site.getPlayUrls(detail: room(), quality: qualities.first);
+    expect(changed.urls.first, contains('account-d'));
+    expect(calls, 4);
+  });
+  test('Bili account change never joins previous account pending room details', () async {
+    final site = _Bili()..cookie = 'account-a';
+    final first = site.getRoomDetail(roomId: '1');
+    site.cookie = 'account-b';
+    final second = site.getRoomDetail(roomId: '1');
+    expect(site.calls, 2);
+    site.gate.complete();
+    await Future.wait([first, second]);
   });
   test(
     'Bili concurrent details share one request but later refresh reloads',

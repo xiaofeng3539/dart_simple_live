@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -34,7 +35,28 @@ Response<dynamic> response(
   headers: Headers.fromMap(headers ?? {}),
 );
 
+class _AccountRoom extends DouyinSite {
+  final gate = Completer<void>();
+  int calls = 0;
+  @override
+  Future<LiveRoomDetail> getRoomDetailByWebRid(String webRid) async {
+    calls++;
+    await gate.future;
+    return LiveRoomDetail(roomId: webRid, title: '', cover: '', userName: '',
+        userAvatar: '', online: 0, status: false, url: '');
+  }
+}
+
 void main() {
+  test('账号改变后不共享上一账号仍在进行的详情请求', () async {
+    final site = _AccountRoom()..cookie = 'a';
+    final first = site.getRoomDetail(roomId: '123');
+    site.cookie = 'b';
+    final second = site.getRoomDetail(roomId: '123');
+    expect(site.calls, 2);
+    site.gate.complete();
+    await Future.wait([first, second]);
+  });
   late Dio original;
   setUp(() {
     CoreLog.enableLog = false;

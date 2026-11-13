@@ -17,16 +17,18 @@ enum WindowMaterial {
   final String label;
 }
 
-/// Window-only decoration: no player, timer, image filter or mobile rendering changes.
+/// Windows 原生材质及 Android 应用内材质，不修改播放器和系统壁纸。
 class WindowAppearanceController extends GetxController {
-  WindowAppearanceController({bool? isWindows})
-      : isWindows = isWindows ?? Platform.isWindows;
+  WindowAppearanceController({bool? isWindows, bool? isAndroid})
+      : isWindows = isWindows ?? Platform.isWindows,
+        isAndroid = isAndroid ?? Platform.isAndroid;
   final bool isWindows;
+  final bool isAndroid;
+  String get _materialKey => isAndroid ? 'AndroidWindowMaterial' : 'WindowMaterial';
   static const _channel = MethodChannel('simple_live/window');
   static Future<void>? _nativeReady;
   final selected = WindowMaterial.lightAcrylic.obs;
   final effective = WindowMaterial.solid.obs;
-  final border = true.obs;
   final windowsBuild = 0.obs;
   Brightness _brightness = Brightness.light;
   Future<void> _operation = Future.value();
@@ -34,28 +36,29 @@ class WindowAppearanceController extends GetxController {
   LocalStorageService get _storage => LocalStorageService.instance;
 
   Future<void> initialize() async {
-    if (!isWindows) return;
-    final saved = _storage.getValue<Object>('WindowMaterial', 0);
+    if (!isWindows && !isAndroid) return;
+    final saved = _storage.getValue<Object>(_materialKey, 0);
     if (saved is int && saved >= 0 && saved < WindowMaterial.values.length) {
       selected.value = WindowMaterial.values[saved];
     }
-    border.value = _storage.getValue<Object>('WindowBorder', true) != false;
     await apply();
   }
 
   Future<void> setMaterial(WindowMaterial material) async {
-    await _storage.setValue('WindowMaterial', material.index);
+    await _storage.setValue(_materialKey, material.index);
     selected.value = material;
     await apply();
   }
 
-  Future<void> setBorder(bool enabled) async {
-    await _storage.setValue('WindowBorder', enabled);
-    border.value = enabled;
-    await apply();
-  }
-
   Future<void> apply({Brightness? brightness, bool force = false}) {
+    if (isAndroid) {
+      final previous = effective.value;
+      effective.value = selected.value;
+      if (previous != effective.value && Get.context != null) {
+        Get.forceAppUpdate();
+      }
+      return Future.value();
+    }
     if (!isWindows) return Future.value();
     final mode = _storage.getValue<int>(LocalStorageService.kThemeMode, 0);
     _brightness = brightness ??
@@ -81,7 +84,7 @@ class WindowAppearanceController extends GetxController {
                 windowsBuild.value < 22523)) {
           material = WindowMaterial.acrylic;
         }
-        final key = '${material.name}:${border.value}:${_brightness.name}:${windowsBuild.value}';
+        final key = '${material.name}:${_brightness.name}:${windowsBuild.value}';
         // Native decoration can itself send theme notifications; do not feed them back forever.
         // DWM/window restoration can discard the native backdrop without any
         // preference changing. Only those invalidation events bypass this cache.
@@ -105,8 +108,7 @@ class WindowAppearanceController extends GetxController {
                 : base.withAlpha(
                     material == WindowMaterial.lightAcrylic ? 65 : 170));
         // Also clears persistent DWM backdrop state when returning to solid.
-        await _channel.invokeMethod('appearanceBorder', {
-          'enabled': border.value,
+        await _channel.invokeMethod('appearanceStyle', {
           'dark': dark,
           'solid': material == WindowMaterial.solid,
         });
@@ -126,7 +128,7 @@ class WindowAppearanceController extends GetxController {
   }
 
   Color tint(ThemeData theme) {
-    if (!isWindows || effective.value == WindowMaterial.solid) {
+    if ((!isWindows && !isAndroid) || effective.value == WindowMaterial.solid) {
       return theme.scaffoldBackgroundColor;
     }
     final alpha = switch (effective.value) {
@@ -140,7 +142,9 @@ class WindowAppearanceController extends GetxController {
   }
 
   ThemeData theme(ThemeData base) {
-    if (!isWindows || effective.value == WindowMaterial.solid) return base;
+    if ((!isWindows && !isAndroid) || effective.value == WindowMaterial.solid) {
+      return base;
+    }
     final colors = base.colorScheme;
     return base.copyWith(
       scaffoldBackgroundColor: Colors.transparent,

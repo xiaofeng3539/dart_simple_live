@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:simple_live_app/services/window_appearance_controller.dart';
+import 'package:simple_live_app/widgets/mobile_material_background.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:simple_live_app/app/app_style.dart';
+import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
@@ -110,6 +112,7 @@ Future initWindow() async {
   }
   await windowManager.ensureInitialized();
   WindowOptions windowOptions = const WindowOptions(
+    size: Constant.kDefaultWindowSize,
     minimumSize: Size(280, 280),
     center: true,
     title: "Simple Live",
@@ -415,7 +418,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                               FourthButtonTapGestureRecognizer>(
                         () => FourthButtonTapGestureRecognizer(),
                         (FourthButtonTapGestureRecognizer instance) {
-                          instance.onTapDown = (TapDownDetails details) async {
+                          instance.onTap = () async {
                             if (await _exitPlayerFullScreen()) return;
                             Get.back();
                           };
@@ -457,6 +460,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 ],
               ),
             );
+            final appearance = Get.find<WindowAppearanceController>();
+            if (Platform.isAndroid) {
+              return MobileMaterialBackground(controller: appearance, child: content);
+            }
             // One tint layer only: nested transparent Scaffolds must not accumulate opacity.
             return ColoredBox(
               color: Get.find<WindowAppearanceController>().tint(Theme.of(context)),

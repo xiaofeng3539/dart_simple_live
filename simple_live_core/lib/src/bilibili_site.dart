@@ -28,6 +28,7 @@ class BiliBiliSite implements LiveSite {
 
   String cookie = "";
   int userId = 0;
+  String _authRoomKey(String roomId) => jsonEncode([cookie, userId, roomId]);
 
   @override
   LiveDanmaku getDanmaku() => BiliBiliDanmaku();
@@ -128,6 +129,7 @@ class BiliBiliSite implements LiveSite {
     required LiveRoomDetail detail,
   }) async {
     List<LivePlayQuality> qualities = [];
+    final accountRoom = _authRoomKey(detail.roomId);
     var result = await _takePlayInfo(detail.roomId);
     var qualitiesMap = <int, String>{};
     final frameRates = <int, double?>{};
@@ -148,10 +150,12 @@ class BiliBiliSite implements LiveSite {
     }
     // 同一次响应里已经带回了某个清晰度的直链，先存着，
     // 选中的清晰度与它一致时省掉一次完全相同的请求。
-    _cachePlayUrl(
-      detail.roomId,
-      result["data"]["playurl_info"]["playurl"],
-    );
+    if (accountRoom == _authRoomKey(detail.roomId)) {
+      _cachePlayUrl(
+        detail.roomId,
+        result["data"]["playurl_info"]["playurl"],
+      );
+    }
     return qualities;
   }
 
@@ -160,7 +164,7 @@ class BiliBiliSite implements LiveSite {
     required LiveRoomDetail detail,
     required LivePlayQuality quality,
   }) => _playUrlRequests.run(
-    jsonEncode([detail.roomId, quality.data]),
+    jsonEncode([cookie, userId, detail.roomId, quality.data]),
     () => _loadPlayUrls(detail, quality),
   );
 
@@ -183,11 +187,11 @@ class BiliBiliSite implements LiveSite {
   /// 清晰度接口只认 roomId，可以在等房间详情的同时先发出去。
   @override
   void prefetchRoom(String roomId) {
-    _playInfoPrefetch.prefetch(roomId, () => _fetchPlayInfo(roomId));
+    _playInfoPrefetch.prefetch(_authRoomKey(roomId), () => _fetchPlayInfo(roomId));
   }
 
   Future<dynamic> _takePlayInfo(String roomId) =>
-      _playInfoPrefetch.take(roomId, () => _fetchPlayInfo(roomId));
+      _playInfoPrefetch.take(_authRoomKey(roomId), () => _fetchPlayInfo(roomId));
 
   Future<dynamic> _fetchPlayInfo(String roomId, {Object? qn}) async {
     return HttpClient.instance.getJson(
@@ -256,21 +260,22 @@ class BiliBiliSite implements LiveSite {
       if (_cachedPlayUrls.length >= 8) {
         _cachedPlayUrls.remove(_cachedPlayUrls.keys.first);
       }
-      _cachedPlayUrls[roomId] = (qn, playUrl, DateTime.now());
+      _cachedPlayUrls[_authRoomKey(roomId)] = (qn, playUrl, DateTime.now());
     } catch (_) {
       // 响应结构不符预期就不缓存，下次照常单独请求。
     }
   }
 
   LivePlayUrl? _takeCachedPlayUrl(String roomId, Object? qualityData) {
-    final cached = _cachedPlayUrls[roomId];
+    final key = _authRoomKey(roomId);
+    final cached = _cachedPlayUrls[key];
     if (cached == null) return null;
     if (DateTime.now().difference(cached.$3) > _cachedPlayUrlTtl) {
-      _cachedPlayUrls.remove(roomId);
+      _cachedPlayUrls.remove(key);
       return null;
     }
     if (int.tryParse("$qualityData") != cached.$1) return null;
-    _cachedPlayUrls.remove(roomId);
+    _cachedPlayUrls.remove(key);
     return cached.$2;
   }
 
@@ -305,9 +310,15 @@ class BiliBiliSite implements LiveSite {
 
   @override
   Future<LiveRoomDetail> getRoomDetail({required String roomId}) =>
-      _roomRequests.run(roomId, () => _loadRoomDetail(roomId));
+      _roomRequests.run(_authRoomKey(roomId), () => _loadRoomDetail(roomId));
 
   final _roomRequests = InFlightRequests<LiveRoomDetail>();
+
+  @override
+  Future<LiveRoomDetail> refreshRoomDetail({required String roomId}) {
+    _roomRequests.invalidate(_authRoomKey(roomId));
+    return getRoomDetail(roomId: roomId);
+  }
 
   Future<LiveRoomDetail> _loadRoomDetail(String roomId) async {
     var roomInfo = await getRoomInfo(roomId: roomId);

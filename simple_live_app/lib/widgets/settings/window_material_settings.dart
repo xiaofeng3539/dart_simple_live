@@ -11,7 +11,7 @@ class WindowMaterialSettings extends GetView<WindowAppearanceController> {
         child: Obx(() => Column(children: [
               ListTile(
                 leading: const Icon(Icons.layers_outlined),
-                title: const Text('窗口材质与边框'),
+                title: Text(controller.isAndroid ? '界面材质' : '窗口材质'),
                 subtitle: Text(
                     controller.selected.value == controller.effective.value
                         ? '立即生效，自动记住选择'
@@ -23,8 +23,9 @@ class WindowMaterialSettings extends GetView<WindowAppearanceController> {
                     key: ValueKey(controller.selected.value),
                     initialValue: controller.selected.value,
                     isExpanded: true,
-                    decoration: const InputDecoration(
-                        labelText: '窗口材质', border: OutlineInputBorder()),
+                    decoration: InputDecoration(
+                        labelText: controller.isAndroid ? '界面材质' : '窗口材质',
+                        border: const OutlineInputBorder()),
                     items: WindowMaterial.values
                         .map((material) => DropdownMenuItem(
                             value: material, child: Text(material.label)))
@@ -33,20 +34,14 @@ class WindowMaterialSettings extends GetView<WindowAppearanceController> {
                       if (value != null) controller.setMaterial(value);
                     },
                   )),
-              SwitchListTile(
-                title: const Text('显示窗口边框'),
-                subtitle: const Text('Windows 11 系统边框；不影响拖动和缩放'),
-                value: controller.border.value,
-                onChanged: controller.windowsBuild.value >= 22000
-                    ? controller.setBorder
-                    : null,
-              ),
               Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                          '云母适用于 Windows 11。不支持的效果自动回退；高对比度或关闭系统透明效果时使用纯色。',
+                          controller.isAndroid
+                              ? '手机端使用应用内仿材质背景，随深浅色主题变化；不读取壁纸、不透出其他应用。'
+                              : '云母适用于 Windows 11。不支持的效果自动回退；高对比度或关闭系统透明效果时使用纯色。',
                           style: Theme.of(context).textTheme.bodySmall))),
             ])));
   }

@@ -13,6 +13,7 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/app/utils/listen_fourth_button.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
+import 'package:simple_live_app/modules/live_room/live_room_page.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -22,6 +23,8 @@ class _Settings extends AppSettingsController {
   @override
   // ignore: must_call_super
   void onInit() {}
+  @override
+  void setPlayerVolume(double value) => playerVolume.value = value;
 }
 
 class _Follows extends FollowService {
@@ -38,6 +41,12 @@ class _Stream implements PlayerStream {
 }
 
 class _Player implements Player {
+  final volumes = <double>[];
+  @override
+  Future<void> setVolume(double volume) async {
+    volumes.add(volume);
+  }
+
   @override
   PlayerState get state => const PlayerState();
   @override
@@ -121,7 +130,159 @@ class _Room extends LiveRoomController {
   void showDanmuSettingsSheet() => danmakuSheets++;
 }
 
+class _VolumeRoom extends _Room {
+  final testPlayer = _Player();
+  @override
+  Player get player => testPlayer;
+  @override
+  void showVolumeSlider(BuildContext context) {}
+}
+
+class _ControlsPage extends LiveRoomPage {
+  const _ControlsPage(this.room);
+  final _Room room;
+  @override
+  LiveRoomController get controller => room;
+  @override
+  Widget buildMediaPlayer() =>
+      Builder(builder: (context) => playerControls(_VideoState(context), room));
+  @override
+  Widget buildUserProfile(BuildContext context) => const SizedBox(height: 48);
+  @override
+  Widget buildMessageArea() => const Expanded(child: SizedBox());
+  @override
+  List<Widget> buildAppbarActions(BuildContext context) => [];
+}
+
 void main() {
+  testWidgets('真实房间和视频两层Focus共存，DFR每次只触发一次', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 800);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final room = _Room();
+    await tester.pumpWidget(GetMaterialApp(home: _ControlsPage(room)));
+    await tester.pump();
+    final initial = room.showDanmakuState.value;
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+    expect(room.showDanmakuState.value, !initial);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    expect(room.enters, 1);
+    room.fullScreenState.value = true;
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    expect(room.exits, 1);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+    expect(room.refreshes, 1);
+    await tester.pumpWidget(const SizedBox());
+    room.hideControlsTimer?.cancel();
+  });
+  for (final full in [false, true]) {
+    testWidgets('非默认比例，全屏=$full，鼠标双击轻微抖动不应被竖向拖动抢走', (tester) async {
+      tester.view.devicePixelRatio = 1.25;
+      tester.view.physicalSize = const Size(1600, 1300);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final room = _Room();
+      room.fullScreenState.value = full;
+      await tester.pumpWidget(GetMaterialApp(
+          home: Scaffold(
+              body: Builder(
+        builder: (context) => playerControls(_VideoState(context), room),
+      ))));
+      for (final size in [
+        const Size(1600, 1300),
+        const Size(1900, 1000),
+        const Size(800, 1200)
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.pump();
+        final point = tester.getCenter(find.byType(Scaffold));
+        final mouse =
+            await tester.startGesture(point, kind: PointerDeviceKind.mouse);
+        await mouse.moveBy(const Offset(0, 6));
+        await tester.pump(const Duration(milliseconds: 30));
+        await mouse.up();
+        await tester.pump(const Duration(milliseconds: 80));
+        await tester.tapAt(point + const Offset(0, 6),
+            kind: PointerDeviceKind.mouse);
+        await tester.pump(const Duration(milliseconds: 350));
+      }
+      expect(full ? room.exits : room.enters, 3);
+      await tester.pumpWidget(const SizedBox());
+      room.hideControlsTimer?.cancel();
+    });
+  }
+  for (final full in [false, true]) {
+    testWidgets('全屏=$full，画面滚轮调音量且音量按钮不重复调整', (tester) async {
+      final room = _VolumeRoom();
+      room.fullScreenState.value = full;
+      room.showControlsState.value = true;
+      AppSettingsController.instance.playerVolume.value = 50;
+      await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+              body: Builder(
+        builder: (context) => playerControls(_VideoState(context), room),
+      ))));
+      await tester.pump(const Duration(milliseconds: 250));
+      void scroll(Offset point, double dy) =>
+          tester.binding.handlePointerEvent(PointerScrollEvent(
+              position: point,
+              scrollDelta: Offset(0, dy),
+              kind: PointerDeviceKind.mouse));
+      scroll(tester.getCenter(find.byType(Scaffold)), -120);
+      expect(AppSettingsController.instance.playerVolume.value, 55);
+      scroll(tester.getCenter(find.byType(Scaffold)), 120);
+      expect(AppSettingsController.instance.playerVolume.value, 50);
+      final volumeIcon = find.byIcon(Icons.volume_down);
+      expect(volumeIcon, findsOneWidget);
+      scroll(tester.getCenter(volumeIcon), -120);
+      expect(AppSettingsController.instance.playerVolume.value, 55);
+      expect(room.testPlayer.volumes, [55, 50, 55]);
+      room.showControlsState.value = false;
+      await tester.pump(const Duration(milliseconds: 250));
+      scroll(tester.getCenter(find.byType(Scaffold)), -120);
+      expect(AppSettingsController.instance.playerVolume.value, 60);
+      expect(room.testPlayer.volumes, [55, 50, 55, 60]);
+      await tester.pumpWidget(const SizedBox());
+      room.hideControlsTimer?.cancel();
+    });
+  }
+  testWidgets('评论区滚轮继续翻消息，不改变播放音量', (tester) async {
+    final room = _VolumeRoom();
+    final chatScroll = ScrollController();
+    addTearDown(chatScroll.dispose);
+    AppSettingsController.instance.playerVolume.value = 50;
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: Row(children: [
+      Expanded(
+          child: Builder(
+              builder: (context) =>
+                  playerControls(_VideoState(context), room))),
+      SizedBox(
+          width: 200,
+          child: ListView.builder(
+            key: const ValueKey('chat-scroll'),
+            controller: chatScroll,
+            itemCount: 100,
+            itemExtent: 40,
+            itemBuilder: (_, i) => Text('消息$i'),
+          )),
+    ]))));
+    await tester.pump();
+    tester.binding.handlePointerEvent(PointerScrollEvent(
+      position: tester.getCenter(find.byKey(const ValueKey('chat-scroll'))),
+      scrollDelta: const Offset(0, 120),
+      kind: PointerDeviceKind.mouse,
+    ));
+    await tester.pump();
+    expect(chatScroll.offset, greaterThan(0));
+    expect(AppSettingsController.instance.playerVolume.value, 50);
+    expect(room.testPlayer.volumes, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+    room.hideControlsTimer?.cancel();
+  });
   for (final size in [const Size(480, 720), const Size(1920, 1080)]) {
     testWidgets('$size 视频中心连续双击 100 次并切换布局始终响应', (tester) async {
       tester.view.devicePixelRatio = 1;
@@ -317,7 +478,7 @@ void main() {
                     GestureRecognizerFactoryWithHandlers<
                         FourthButtonTapGestureRecognizer>(
                   FourthButtonTapGestureRecognizer.new,
-                  (recognizer) => recognizer.onTapDown = (_) {},
+                  (recognizer) => recognizer.onTap = () {},
                 ),
               },
                   child: Builder(

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   group('handlePlayerShortcut', () {
     test('D toggles danmaku', () {
       var toggled = false;

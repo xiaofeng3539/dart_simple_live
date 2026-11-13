@@ -7,6 +7,7 @@ import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
+import 'package:simple_live_app/widgets/room_entry_warmup.dart';
 import 'dart:ui' as ui;
 
 class FollowUserItem extends StatelessWidget {
@@ -27,7 +28,7 @@ class FollowUserItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     var site = Sites.allSites[item.siteId]!;
-    return ListTile(
+    final tile = ListTile(
       contentPadding: AppStyle.edgeInsetsL16.copyWith(right: 4),
       leading: NetImage(
         item.face,
@@ -132,6 +133,8 @@ class FollowUserItem extends StatelessWidget {
       onTap: onTap,
       onLongPress: onLongPress,
     );
+    return playing || onTap == null ? tile : RoomEntryWarmup(
+      source: site.liveSite, roomId: item.roomId, child: tile);
   }
 
   Widget _buildRemoveButton(BuildContext context) {

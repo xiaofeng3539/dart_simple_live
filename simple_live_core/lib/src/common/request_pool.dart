@@ -4,19 +4,24 @@ import 'dart:async';
 class InFlightRequests<T> {
   final _pending = <String, Future<T>>{};
 
+  /// 解除旧轮的共享登记，不取消仍由旧调用者等待的请求。
+  void invalidate(String key) => _pending.remove(key);
+
   Future<T> run(String key, Future<T> Function() load) {
     return _pending.putIfAbsent(key, () {
       // Convert synchronous loader errors too, so both paths release the key.
-      return Future<T>.sync(load).then(
+      late final Future<T> request;
+      request = Future<T>.sync(load).then(
         (value) {
-          _pending.remove(key);
+          if (identical(_pending[key], request)) _pending.remove(key);
           return value;
         },
         onError: (Object error, StackTrace stack) {
-          _pending.remove(key);
+          if (identical(_pending[key], request)) _pending.remove(key);
           Error.throwWithStackTrace(error, stack);
         },
       );
+      return request;
     });
   }
 }

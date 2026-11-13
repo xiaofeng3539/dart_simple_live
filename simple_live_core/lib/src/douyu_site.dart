@@ -1,4 +1,5 @@
 import 'common/native_quality.dart';
+import 'common/core_error.dart';
 import 'common/request_pool.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -217,6 +218,10 @@ class DouyuSite implements LiveSite {
       queryParameters: {},
     );
 
+    if (result['error'] != 0 || result['data']?['rl'] is! List) {
+      throw CoreError('斗鱼推荐接口未返回有效数据，请稍后刷新');
+    }
+
     var items = <LiveRoomItem>[];
     for (var item in result['data']['rl']) {
       if (item["type"] != 1) {
@@ -231,7 +236,13 @@ class DouyuSite implements LiveSite {
       );
       items.add(roomItem);
     }
-    var hasMore = page < result['data']['pgcnt'];
+    // The live endpoint can report pgcnt=0 while later pages still exist.
+    // Only a positive page count is authoritative; otherwise use raw rows
+    // (before filtering non-room cards) and stop on an empty upstream page.
+    final pageCount = int.tryParse('${result['data']['pgcnt']}') ?? 0;
+    final hasMore = pageCount > 0
+        ? page < pageCount
+        : (result['data']['rl'] as List).isNotEmpty;
     return LiveCategoryResult(hasMore: hasMore, items: items);
   }
 
@@ -281,6 +292,12 @@ class DouyuSite implements LiveSite {
       _roomRequests.run(roomId, () => _loadRoomDetail(roomId));
 
   final _roomRequests = InFlightRequests<LiveRoomDetail>();
+
+  @override
+  Future<LiveRoomDetail> refreshRoomDetail({required String roomId}) {
+    _roomRequests.invalidate(roomId);
+    return getRoomDetail(roomId: roomId);
+  }
 
   Future<LiveRoomDetail> _loadRoomDetail(String roomId) async {
     Map roomInfo = await _getRoomInfo(roomId);

@@ -9,7 +9,7 @@ class SettingsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final material = Platform.isWindows &&
+    final material = (Platform.isWindows || Platform.isAndroid) &&
         theme.scaffoldBackgroundColor == Colors.transparent;
     final radius = material ? BorderRadius.circular(12) : AppStyle.radius8;
     return Material(

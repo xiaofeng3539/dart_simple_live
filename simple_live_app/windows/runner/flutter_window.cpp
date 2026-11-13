@@ -92,7 +92,7 @@ bool FlutterWindow::OnCreate() {
                   static_cast<int32_t>(version.dwBuildNumber))},
               {flutter::EncodableValue("transparency"), flutter::EncodableValue(
                   transparency != 0 && composition && !(contrast.dwFlags & HCF_HIGHCONTRASTON))}});
-        } else if (call.method_name() == "appearanceBorder") {
+        } else if (call.method_name() == "appearanceStyle") {
           const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
           if (!args) {
             result->Error("arguments", "Expected appearance options");
@@ -104,8 +104,6 @@ bool FlutterWindow::OnCreate() {
                    std::get<bool>(value->second);
           };
           // These DWM attributes safely return unsupported on older Windows.
-          const COLORREF border = flag("enabled") ? 0xFFFFFFFF : 0xFFFFFFFE;
-          DwmSetWindowAttribute(GetHandle(), 34, &border, sizeof(border));
           const BOOL dark = flag("dark");
           DwmSetWindowAttribute(GetHandle(), 20, &dark, sizeof(dark));
           const int round = 2;

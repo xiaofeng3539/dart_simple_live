@@ -21,8 +21,6 @@ class AppSearchController extends GetxController {
   final webViewLoading = false.obs;
   final webViewError = RxnString();
   final webViewRevision = 0.obs;
-  void Function(String roomId)? onRoomDetected;
-  String? _lastPromptedRoom;
   InAppWebViewController? webViewController;
   Future<WebViewEnvironment?>? _webViewEnvironment;
   Timer? _loadTimer;
@@ -101,7 +99,6 @@ class AppSearchController extends GetxController {
     webViewVisible.value = true;
     startLoading(SearchRoomUrl.homeUriFor(site.id));
     roomId.value = null;
-    _lastPromptedRoom = null;
     selectedSite.value = site;
   }
 
@@ -115,29 +112,16 @@ class AppSearchController extends GetxController {
         ? null
         : SearchRoomUrl.roomIdFor(site.id, uri);
     roomId.value = detectedRoomId;
-    if (detectedRoomId == null && uri != null &&
-        (uri.scheme == 'https' || uri.scheme == 'http')) {
-      _lastPromptedRoom = null;
-    }
-    if (site != null && detectedRoomId != null) {
-      final roomKey = '${site.id}:$detectedRoomId';
-      if (_lastPromptedRoom != roomKey) {
-        _lastPromptedRoom = roomKey;
-        onRoomDetected?.call(detectedRoomId);
-      }
-    }
   }
 
   void reset() {
     webViewRevision.value++;
     webViewController?.removeJavaScriptHandler(handlerName: SearchWebNavigation.handlerName);
-    onRoomDetected = null;
     _loadTimer?.cancel();
     webViewLoading.value = false;
     webViewError.value = null;
     webViewVisible.value = true;
     roomId.value = null;
-    _lastPromptedRoom = null;
     selectedSite.value = null;
     _navigationUrl = null;
     _loadingUrl = null;
@@ -278,7 +262,6 @@ class AppSearchController extends GetxController {
     webViewRevision.value++;
     webViewController?.removeJavaScriptHandler(handlerName: SearchWebNavigation.handlerName);
     webViewController = null;
-    onRoomDetected = null;
     _loadTimer?.cancel();
     _disposeWebViewEnvironment();
     super.onClose();
@@ -298,6 +281,23 @@ class AppSearchController extends GetxController {
   NavigationActionPolicy handleNavigation(NavigationAction action) {
     if (action.isForMainFrame) updateUrl(action.request.url);
     return NavigationActionPolicy.ALLOW;
+  }
+
+  Future<void> openCurrentRoom() async {
+    final view = webViewController;
+    final revision = webViewRevision.value;
+    if (view == null || !webViewVisible.value || !_isCurrent(view, revision)) {
+      return;
+    }
+    try {
+      // 快捷键不依赖顶部按钮是否已出现：先读取真实地址，补上遗漏的导航回调。
+      final uri = await view.getUrl();
+      if (!_isCurrent(view, revision)) return;
+      if (uri != null) updateUrl(uri);
+      await openRoom();
+    } catch (error, stack) {
+      Log.e('打开当前网页直播间失败：$error', stack);
+    }
   }
 
   Future<void> openRoom({String? detectedRoomId}) async {

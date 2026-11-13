@@ -311,7 +311,7 @@ void main() {
     expect(room.errorMsg.value, contains('VIP'));
     expect(room.fake.opens, 0);
   });
-  testWidgets('持续缓冲15秒切换备用线路', (tester) async {
+  testWidgets('首次持续缓冲8秒切换备用线路，不额外等待15秒', (tester) async {
     final room = _Room();
     room.liveStatus.value = true;
     room.playUrls.addAll([
@@ -320,11 +320,23 @@ void main() {
     ]);
     room.currentLineIndex = 0;
     room.mediaBuffering(true);
-    await tester.pump(const Duration(seconds: 14));
+    await tester.pump(const Duration(seconds: 7));
     expect(room.fake.opens, 0);
     await tester.pump(const Duration(seconds: 1));
     expect(room.currentLineIndex, 1);
     expect(room.fake.opens, 1);
+    room.mediaBuffering(false);
+  });
+  testWidgets('首次起播超时有备用线路时不等待虎牙重新签名接口', (tester) async {
+    final gate = Completer<LivePlayUrl>();
+    final source = _SlowHuya()..urlRequest = gate.future;
+    final room = stalledRoom(source);
+    room.mediaBuffering(true);
+    await tester.pump(const Duration(seconds: 8));
+    expect(room.currentLineIndex, 1);
+    expect(room.fake.opens, 1);
+    expect(source.calls, 0);
+    gate.complete(LivePlayUrl(urls: ['https://unused/live.flv']));
     room.mediaBuffering(false);
   });
   testWidgets('缓冲恢复后不切换，后台不自动重连', (tester) async {

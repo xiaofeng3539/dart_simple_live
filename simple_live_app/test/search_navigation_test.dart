@@ -9,8 +9,6 @@ void main() {
     final controller = AppSearchController();
     addTearDown(controller.onClose);
     controller.selectSite(Sites.allSites[Constant.kHuya]!);
-    final prompts = <String>[];
-    controller.onRoomDetected = prompts.add;
     final policy = controller.handleNavigation(NavigationAction(
       request: URLRequest(url: WebUri('https://m.huya.com/12345')),
       isForMainFrame: true,
@@ -21,10 +19,10 @@ void main() {
       isForMainFrame: false,
     ));
     expect(controller.roomId.value, '12345');
-    expect(prompts, ['12345']);
+    expect(controller.webViewVisible.value, isTrue);
   });
 
-  test('四个平台手机导航都能产生房间提示和底部按钮目标', () {
+  test('四个平台手机导航识别房间并保持网页浏览', () {
     const cases = [
       (Constant.kBiliBili, 'https://live.bilibili.com/h5/12345', '12345'),
       (Constant.kHuya, 'https://m.huya.com/abc123', 'abc123'),
@@ -39,31 +37,28 @@ void main() {
       final controller = AppSearchController();
       addTearDown(controller.onClose);
       controller.selectSite(Sites.allSites[site]!);
-      final prompts = <String>[];
-      controller.onRoomDetected = prompts.add;
       controller.updateUrl(Uri.parse(url));
       controller.updateUrl(Uri.parse(url));
       expect(controller.roomId.value, id);
-      expect(prompts, [id]);
+      expect(controller.webViewVisible.value, isTrue);
     }
   });
 
-  test('离开房间返回搜索页后再次进入同一房间仍提示', () {
+  test('离开房间清除目标，再次进入同一房间恢复快捷入口目标', () {
     final controller = AppSearchController();
     addTearDown(controller.onClose);
     controller.selectSite(Sites.allSites[Constant.kDouyu]!);
-    final prompts = <String>[];
-    controller.onRoomDetected = prompts.add;
     controller.updateUrl(Uri.parse('https://www.douyu.com/12345'));
     controller.updateUrl(Uri.parse('https://www.douyu.com/search/abc'));
+    expect(controller.roomId.value, isNull);
     controller.updateUrl(Uri.parse('https://www.douyu.com/12345'));
-    expect(prompts, ['12345', '12345']);
+    expect(controller.roomId.value, '12345');
+    expect(controller.webViewVisible.value, isTrue);
   });
 
-  test('四个平台进入直播间时各提示一次', () {
+  test('切换四个平台后快捷入口始终指向当前平台房间', () {
     final controller = AppSearchController();
-    final prompts = <String>[];
-    controller.onRoomDetected = prompts.add;
+    addTearDown(controller.onClose);
     const rooms = [
       (Constant.kBiliBili, 'https://live.bilibili.com/12345', '12345'),
       (Constant.kHuya, 'https://www.huya.com/abc123', 'abc123'),
@@ -78,9 +73,9 @@ void main() {
       controller.selectSite(Sites.allSites[siteId]!);
       controller.updateUrl(Uri.parse(url));
       controller.updateUrl(Uri.parse(url));
-      expect(prompts.last, roomId);
+      expect(controller.roomId.value, roomId);
+      expect(controller.selectedSite.value!.id, siteId);
     }
-    expect(prompts.length, rooms.length);
   });
 
   test('选择平台后，仅在当前平台直播间显示跳转目标', () {

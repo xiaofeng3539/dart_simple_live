@@ -6,6 +6,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/routes/app_navigation.dart';
 import 'package:simple_live_app/widgets/net_image.dart';
 import 'package:simple_live_app/widgets/shadow_card.dart';
+import 'package:simple_live_app/widgets/room_entry_warmup.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class LiveRoomCard extends StatelessWidget {
@@ -15,7 +16,10 @@ class LiveRoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ShadowCard(
+    return RoomEntryWarmup(
+      source: site.liveSite,
+      roomId: item.roomId,
+      child: ShadowCard(
       onTap: () {
         AppNavigator.toLiveRoomDetail(site: site, roomId: item.roomId);
       },
@@ -95,6 +99,7 @@ class LiveRoomCard extends StatelessWidget {
             ),
           )
         ],
+      ),
       ),
     );
   }

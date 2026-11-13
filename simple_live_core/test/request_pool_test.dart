@@ -3,6 +3,20 @@ import 'package:simple_live_core/src/common/request_pool.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('强制刷新解除旧请求，新请求不被旧请求的迟到完成移除', () async {
+    final pool = InFlightRequests<int>();
+    final old = Completer<int>();
+    final fresh = Completer<int>();
+    final a = pool.run('1', () => old.future);
+    pool.invalidate('1');
+    final b = pool.run('1', () => fresh.future);
+    old.complete(1);
+    expect(await a, 1);
+    final c = pool.run('1', () async => 99);
+    fresh.complete(2);
+    expect(await b, 2);
+    expect(await c, 2);
+  });
   test(
     'pending failed prefetch retries once for all waiting consumers',
     () async {

@@ -13,6 +13,8 @@ import 'package:simple_live_app/app/sites.dart';
 import 'package:simple_live_app/modules/live_room/live_room_controller.dart';
 import 'package:simple_live_app/modules/live_room/player/player_controls.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/room_startup_cache.dart';
+import 'package:simple_live_app/services/playback_route_history.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class _Settings extends AppSettingsController {
@@ -95,6 +97,15 @@ class _Site extends LiveSite {
     sc++;
     return [];
   }
+}
+
+class _MultiSite extends _Site {
+  @override
+  Future<LivePlayUrl> getPlayUrls({required LiveRoomDetail detail,
+      required LivePlayQuality quality}) async => LivePlayUrl(urls: [
+        'https://startup-first.example/live.flv',
+        'https://startup-fast.example/live.flv',
+      ]);
 }
 
 class _Player implements Player {
@@ -181,6 +192,40 @@ void main() {
       navigatorObservers: [FlutterSmartDialog.observer],
       builder: FlutterSmartDialog.init(),
       home: const Scaffold()));
+
+  testWidgets('进入消费预取详情，刷新仍强制请求，不重复开流', (tester) async {
+    await mount(tester);
+    final source = _Site()..request = () async => _detail();
+    RoomStartupCache.instance.prefetch(source, '1');
+    await tester.pump();
+    expect(source.details, 1);
+    final room = _Room(source);
+    room.loadData(reusePrefetch: true);
+    await tester.pump();
+    expect(source.details, 1);
+    expect(room.fake.opens, 1);
+    room.refreshRoom();
+    await tester.pump();
+    expect(source.details, 2);
+    expect(room.fake.opens, 2);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('同画质已验证快线路置前，备用线路不丢失', (tester) async {
+    await mount(tester);
+    final room = _Room(_MultiSite());
+    _seed(room);
+    PlaybackRouteHistory.instance.success('test', '原画',
+        'https://startup-fast.example/previous.flv?token=old',
+        const Duration(milliseconds: 500));
+    room.getPlayUrl();
+    await tester.pump();
+    expect(room.playUrls.first, 'https://startup-fast.example/live.flv');
+    expect(room.playUrls.last, 'https://startup-first.example/live.flv');
+    expect(room.qualites[room.currentQuality].quality, '原画');
+    expect(room.fake.opens, 1);
+    await tester.pump(const Duration(seconds: 1));
+  });
 
   for (final platform in ['huya', 'douyin']) {
     testWidgets('$platform 已下播时从APP菜单打开网页，不依赖弹幕参数', (tester) async {

@@ -97,7 +97,7 @@ void main() {
     expect(controller.effective.value, WindowMaterial.micaAlt);
     expect(storage.values['WindowMaterial'], WindowMaterial.micaAlt.index);
   });
-  testWidgets('窄窗口可选五种材质和边框，选择立即保存', (tester) async {
+  testWidgets('窄窗口保留五种材质，移除边框开关，选择立即保存', (tester) async {
     tester.view.physicalSize = const Size(360, 780);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -114,9 +114,8 @@ void main() {
     await tester.tap(find.text('云母 Alt').last);
     await tester.pumpAndSettle();
     expect(storage.values['WindowMaterial'], WindowMaterial.micaAlt.index);
-    await tester.tap(find.byType(Switch));
-    await tester.pumpAndSettle();
-    expect(storage.values['WindowBorder'], false);
+    expect(find.byType(Switch), findsNothing);
+    expect(find.textContaining('边框'), findsNothing);
     expect(tester.takeException(), isNull);
   });
   test('默认轻薄亚克力，所有材质均能切换且重启恢复偏好', () async {
@@ -155,11 +154,10 @@ void main() {
     expect(controller.effective.value, WindowMaterial.solid);
     expect(controller.theme(ThemeData.light()).scaffoldBackgroundColor.a, 1);
   });
-  test('边框偏好独立保存，深浅色更新不改变材质', () async {
+  test('旧边框偏好不影响材质，深浅色更新不改变选择', () async {
+    storage.values['WindowBorder'] = false;
     final controller = WindowAppearanceController(isWindows: true);
     await controller.initialize();
-    await controller.setBorder(false);
-    expect(storage.values['WindowBorder'], false);
     await controller.apply(brightness: Brightness.dark);
     expect(effects.last.arguments['dark'], isTrue);
     expect(controller.selected.value, WindowMaterial.lightAcrylic);

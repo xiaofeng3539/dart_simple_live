@@ -19,7 +19,7 @@ class AppstyleSettingPage extends GetView<AppSettingsController> {
       body: ListView(
         padding: AppStyle.edgeInsetsA12,
         children: [
-          if (Platform.isWindows) ...[
+          if (Platform.isWindows || Platform.isAndroid) ...[
             const WindowMaterialSettings(),
             AppStyle.vGap12,
           ],

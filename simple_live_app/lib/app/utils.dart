@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:remixicon/remixicon.dart';
@@ -53,33 +54,92 @@ class Utils {
     String cancel = '',
     bool selectable = false,
     List<Widget>? actions,
+    BoxConstraints? constraints,
+    double maxContentHeight = 400,
+    bool doubleTapConfirm = false,
   }) async {
-    var result = await Get.dialog(
-      AlertDialog(
-        title: Text(title),
-        content: Container(
-          constraints: const BoxConstraints(
-            maxHeight: 400,
-          ),
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: AppStyle.edgeInsetsV12,
-              child: selectable ? SelectableText(content) : Text(content),
-            ),
+    PointerDownEvent? pointerDown;
+    PointerUpEvent? previousTap;
+    var confirmed = false;
+    void resetTaps(PointerEvent event) {
+      pointerDown = null;
+      previousTap = null;
+    }
+
+    final dialog = AlertDialog(
+      constraints: constraints,
+      title: Text(title),
+      content: Container(
+        constraints: BoxConstraints(maxHeight: maxContentHeight),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: AppStyle.edgeInsetsV12,
+            child: selectable ? SelectableText(content) : Text(content),
           ),
         ),
-        actions: [
-          ...?actions,
-          TextButton(
-            onPressed: (() => Get.back(result: false)),
-            child: Text(cancel.isEmpty ? "取消" : cancel),
-          ),
-          TextButton(
-            onPressed: (() => Get.back(result: true)),
-            child: Text(confirm.isEmpty ? "确定" : confirm),
-          ),
-        ],
       ),
+      actions:
+          [
+                ...?actions,
+                TextButton(
+                  onPressed: (() => Get.back(result: false)),
+                  child: Text(cancel.isEmpty ? "取消" : cancel),
+                ),
+                TextButton(
+                  onPressed: (() => Get.back(result: true)),
+                  child: Text(confirm.isEmpty ? "确定" : confirm),
+                ),
+              ]
+              .map(
+                (action) => doubleTapConfirm
+                    ? Listener(onPointerUp: resetTaps, child: action)
+                    : action,
+              )
+              .toList(),
+    );
+    var result = await Get.dialog(
+      doubleTapConfirm
+          // 使用原始指针事件，避免链接文字的双击选择手势抢走双击。
+          // deferToChild 保证仅弹窗卡片命中，遮罩不触发确认。
+          ? Listener(
+              onPointerDown: (event) {
+                if (event.buttons != kPrimaryButton) {
+                  resetTaps(event);
+                  return;
+                }
+                pointerDown = event;
+              },
+              onPointerMove: (event) {
+                if (pointerDown != null &&
+                    (event.position - pointerDown!.position).distance >
+                        kTouchSlop) {
+                  resetTaps(event);
+                }
+              },
+              onPointerCancel: resetTaps,
+              onPointerUp: (event) {
+                final down = pointerDown;
+                pointerDown = null;
+                if (confirmed ||
+                    down == null ||
+                    down.pointer != event.pointer ||
+                    event.timeStamp - down.timeStamp > kLongPressTimeout) {
+                  previousTap = null;
+                  return;
+                }
+                final previous = previousTap;
+                previousTap = event;
+                if (previous != null &&
+                    down.timeStamp - previous.timeStamp <= kDoubleTapTimeout &&
+                    (event.position - previous.position).distance <=
+                        kDoubleTapSlop) {
+                  confirmed = true;
+                  Get.back(result: true);
+                }
+              },
+              child: dialog,
+            )
+          : dialog,
     );
     return result ?? false;
   }

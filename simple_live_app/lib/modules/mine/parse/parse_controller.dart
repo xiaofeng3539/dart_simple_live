@@ -78,6 +78,9 @@ class ParseController extends GetxController {
         confirm: '打开直播间',
         cancel: '留在此页',
         selectable: true,
+        constraints: const BoxConstraints(maxWidth: 520),
+        maxContentHeight: 144,
+        doubleTapConfirm: true,
       );
       if (open && !isClosed) {
         AppNavigator.toLiveRoomDetail(site: result[1], roomId: result.first);

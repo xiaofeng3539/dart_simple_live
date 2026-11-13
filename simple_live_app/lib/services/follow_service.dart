@@ -17,6 +17,7 @@ import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/models/db/follow_user.dart';
 import 'package:simple_live_app/models/db/follow_user_tag.dart';
 import 'package:simple_live_app/services/db_service.dart';
+import 'package:simple_live_app/services/room_startup_cache.dart';
 import 'package:simple_live_core/simple_live_core.dart';
 
 class FollowService extends GetxService with WidgetsBindingObserver {
@@ -277,7 +278,7 @@ class FollowService extends GetxService with WidgetsBindingObserver {
     try {
       final site = Sites.allSites[item.siteId]!;
       final douyinDetail = site.liveSite is DouyinSite
-          ? await site.liveSite.getRoomDetail(roomId: item.roomId)
+            ? await RoomStartupCache.instance.refresh(site.liveSite, item.roomId)
           : null;
       final isLiving = douyinDetail?.status ??
           await site.liveSite.getLiveStatus(roomId: item.roomId);
@@ -288,7 +289,7 @@ class FollowService extends GetxService with WidgetsBindingObserver {
       String? categoryName;
       if (isLiving) {
         final detail = douyinDetail ??
-            await site.liveSite.getRoomDetail(roomId: item.roomId);
+              await RoomStartupCache.instance.refresh(site.liveSite, item.roomId);
         liveStartTime = detail.showTime;
         heat = detail.online > 0 ? detail.online : null;
         categoryName = (site.liveSite is DouyinSite

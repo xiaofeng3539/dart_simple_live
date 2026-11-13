@@ -447,6 +447,12 @@ class HuyaSite implements LiveSite {
 
   final _roomRequests = InFlightRequests<LiveRoomDetail>();
 
+  @override
+  Future<LiveRoomDetail> refreshRoomDetail({required String roomId}) {
+    _roomRequests.invalidate(roomId);
+    return getRoomDetail(roomId: roomId);
+  }
+
   Future<LiveRoomDetail> _loadRoomDetail(String roomId) async {
     try {
       return await _getRoomDetailViaApi(roomId);

@@ -58,7 +58,7 @@ class SearchRoomUrl {
       case Constant.kDouyin:
         if (uri.host == 'www.douyin.com' &&
             segments.length == 3 &&
-            segments[0] == 'root' &&
+            {'root', 'follow'}.contains(segments[0]) &&
             segments[1] == 'live') {
           return RegExp(r'^\d+$').hasMatch(segments[2]) ? segments[2] : null;
         }

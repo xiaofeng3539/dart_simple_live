@@ -103,6 +103,62 @@ void main() {
     });
   }
 
+  test('恢复默认窗口尺寸失败后仍可重试', () async {
+    var fail = true;
+    var sizes = 0;
+    maximized = true;
+    nativeFullscreen = true;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'isFullScreen') return nativeFullscreen;
+      if (call.method == 'setFullScreen') {
+        nativeFullscreen = (call.arguments as Map)['isFullScreen'] as bool;
+      }
+      if (call.method == 'isMaximized') return maximized;
+      if (call.method == 'unmaximize') maximized = false;
+      if (call.method == 'setBounds') {
+        sizes++;
+        if (fail) throw PlatformException(code: 'resize-failed');
+        expect((call.arguments as Map)['width'], 1280);
+        expect((call.arguments as Map)['height'], 720);
+      }
+      return null;
+    });
+    final controller = _TestPlayer();
+    await expectLater(controller.restoreDefaultWindowSize(),
+        throwsA(isA<PlatformException>()));
+    fail = false;
+    await controller.restoreDefaultWindowSize();
+    expect(sizes, 2);
+    expect(maximized, isFalse);
+    expect(nativeFullscreen, isFalse);
+    expect(controller.fullScreenState.value, isFalse);
+  });
+
+  test('恢复尺寸期间重复双击不重复设置窗口，也不插入全屏', () async {
+    final gate = Completer<void>();
+    var resizes = 0;
+    var fullscreenRequests = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'isFullScreen') return false;
+      if (call.method == 'isMaximized') return false;
+      if (call.method == 'setFullScreen') fullscreenRequests++;
+      if (call.method == 'setBounds') {
+        resizes++;
+        await gate.future;
+      }
+      return null;
+    });
+    final controller = _TestPlayer();
+    final restoring = controller.restoreDefaultWindowSize();
+    await Future<void>.delayed(Duration.zero);
+    await controller.restoreDefaultWindowSize();
+    await controller.onDoubleTap();
+    expect(resizes, 1);
+    expect(fullscreenRequests, 0);
+    gate.complete();
+    await restoring;
+  });
+
   test('Windows 调整窗口尺寸前准备全屏布局', () async {
     final fullscreenComplete = Completer<void>();
     messenger.setMockMethodCallHandler(channel, (call) async {

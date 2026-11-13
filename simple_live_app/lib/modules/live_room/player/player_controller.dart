@@ -17,6 +17,7 @@ import 'package:screen_brightness/screen_brightness.dart';
 import 'package:simple_live_app/app/controller/app_settings_controller.dart';
 import 'package:simple_live_app/app/controller/base_controller.dart';
 import 'package:simple_live_app/app/custom_throttle.dart';
+import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/app/log.dart';
 import 'package:simple_live_app/app/utils.dart';
 import 'package:simple_live_app/services/system_proxy_service.dart';
@@ -30,6 +31,7 @@ mixin PlayerMixin {
   GlobalKey globalDanmuKey = GlobalKey();
   Future<void>? _playerInitialization;
   PlaybackDiagnostics? playbackDiagnostics;
+  final startupTiming = ''.obs;
   void playbackSample(PlaybackSnapshot sample) {}
 
   /// 播放器实例
@@ -281,6 +283,7 @@ mixin PlayerDanmakuMixin on PlayerStateMixin {
 mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
   final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
   bool _changingFullScreen = false;
+  bool _restoringWindowSize = false;
   bool _playerClosing = false;
 
   final pip = Floating();
@@ -330,6 +333,7 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   /// 进入全屏
   Future<void> enterFullScreen() async {
+    if (_restoringWindowSize) return;
     if (Platform.isWindows) {
       await _setWindowsFullScreen(true);
       return;
@@ -423,6 +427,29 @@ mixin PlayerSystemMixin on PlayerMixin, PlayerStateMixin, PlayerDanmakuMixin {
 
   Size? _lastWindowSize;
   Offset? _lastWindowPosition;
+
+  Future<void> restoreDefaultWindowSize() async {
+    if (Platform.isAndroid ||
+        Platform.isIOS ||
+        _playerClosing ||
+        _changingFullScreen ||
+        _restoringWindowSize) {
+      return;
+    }
+    _restoringWindowSize = true;
+    try {
+      // Restore native state before resizing: setSize alone cannot resize a
+      // maximized/fullscreen window. Leave the user's window position intact.
+      if (smallWindowState.value) await exitSmallWindow();
+      await exitFull();
+      if (_playerClosing) return;
+      if (await windowManager.isMaximized()) await windowManager.unmaximize();
+      if (_playerClosing) return;
+      await windowManager.setSize(Constant.kDefaultWindowSize);
+    } finally {
+      _restoringWindowSize = false;
+    }
+  }
 
   ///小窗模式()
   Future<void> enterSmallWindow() async {
@@ -644,7 +671,7 @@ mixin PlayerGestureControlMixin
 
   /// 双击全屏/退出全屏
   Future<void> onDoubleTap() async {
-    if (lockControlsState.value) {
+    if (lockControlsState.value || _restoringWindowSize) {
       return;
     }
     if (Platform.isWindows && !smallWindowState.value) {
@@ -924,6 +951,11 @@ class PlayerController extends BaseController
       title: "播放信息",
       child: ListView(
         children: [
+          Obx(() => ListTile(
+            title: const Text('开播阶段耗时'),
+            subtitle: Text(startupTiming.value.isEmpty
+                ? '等待播放进度，非首帧渲染计时' : startupTiming.value),
+          )),
           if (refresh != null) Obx(() => ListTile(
             title: const Text('原生帧率 / 屏幕刷新率'),
             subtitle: Text('直播源 ${refresh.sourceFps.value > 0 ? '${refresh.sourceFps.value.toStringAsFixed(2)} fps' : '读取中'} · '

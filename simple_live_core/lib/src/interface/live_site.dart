@@ -65,6 +65,10 @@ class LiveSite {
     ));
   }
 
+  /// 显式刷新需要越过旧轮正在进行的详情请求。
+  Future<LiveRoomDetail> refreshRoomDetail({required String roomId}) =>
+      getRoomDetail(roomId: roomId);
+
   /// 预取该房间后续要用的接口数据。
   ///
   /// 只依赖 roomId 的请求可以在进房时先发，和房间详情叠在一起等。

@@ -3,6 +3,22 @@ import 'package:simple_live_app/app/constant.dart';
 import 'package:simple_live_app/modules/search/search_room_url.dart';
 
 void main() {
+  test('抖音关注页内直播房间地址可识别，不把关注列表当作房间', () {
+    expect(
+        SearchRoomUrl.roomIdFor(
+            'douyin',
+            Uri.parse(
+                'https://www.douyin.com/follow/live/46912316249?anchor_id=1')),
+        '46912316249');
+    expect(
+        SearchRoomUrl.roomIdFor('douyin',
+            Uri.parse('https://www.douyin.com/follow/live/67839072609')),
+        '67839072609');
+    expect(
+        SearchRoomUrl.roomIdFor(
+            'douyin', Uri.parse('https://www.douyin.com/follow')),
+        isNull);
+  });
   test('手机网页重定向后的房间地址仍可识别', () {
     const cases = [
       (

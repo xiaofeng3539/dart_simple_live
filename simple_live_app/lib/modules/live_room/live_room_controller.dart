@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:simple_live_app/services/room_emoticons.dart';
 import 'package:simple_live_app/services/playback_diagnostics.dart';
+import 'package:simple_live_app/services/room_startup_cache.dart';
+import 'package:simple_live_app/services/playback_route_history.dart';
 import 'package:simple_live_app/widgets/live_message_content.dart';
 import 'dart:io';
 
@@ -193,6 +195,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   Future<int>? _qualityLevelFuture;
   final _openWatch = Stopwatch();
   final _openMarks = <String, int>{};
+  final _lineWatch = Stopwatch();
+  (String, String, String)? _openingRoute;
+  String get _routeQuality => currentQuality >= 0 && currentQuality < qualites.length
+      ? qualites[currentQuality].quality : '';
   int _offlineCheckRequest = -1;
   bool _isCurrentRoomRequest(int request) =>
       !_roomClosed && request == _roomRequest;
@@ -249,6 +255,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   void _setRoomOffline(LiveRoomDetail room) {
+    _lineWatch.stop();
     final request =
         ++_playRequest; // All old quality/URL/player results are stale.
     detail.value = room;
@@ -298,7 +305,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     initAutoExit();
     showDanmakuState.value = AppSettingsController.instance.danmuEnable.value;
     followed.value = DBService.instance.getFollowExist("${site.id}_$roomId");
-    loadData();
+    loadData(reusePrefetch: true);
 
     scrollController.addListener(scrollListener);
 
@@ -522,7 +529,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   /// 加载直播间信息
-  void loadData() async {
+  void loadData({bool reusePrefetch = false}) async {
     if (_roomClosed) return;
     _bufferingTimer?.cancel();
     _bufferingTimer = null;
@@ -535,6 +542,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       ..reset()
       ..start();
     _openMarks.clear();
+    startupTiming.value = '';
+    _lineWatch.stop();
     // 网络类型判断和播放器初始化都不依赖房间数据，先和下面的请求并行跑，
     // 地址到手时播放器已经就绪，可以直接 open。
     _qualityLevelFuture = _readQualityLevel();
@@ -558,8 +567,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       addSysMsg("正在读取直播间信息");
       final roomSite = site;
       final roomIdToLoad = roomId;
-      final roomDetail =
-          await roomSite.liveSite.getRoomDetail(roomId: roomIdToLoad);
+      final roomDetail = await (reusePrefetch
+          ? RoomStartupCache.instance.take(roomSite.liveSite, roomIdToLoad)
+          : RoomStartupCache.instance.refresh(roomSite.liveSite, roomIdToLoad));
       if (!_isCurrentRoomRequest(request)) return;
       detail.value = roomDetail;
       _markOpen('详情');
@@ -596,6 +606,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         }
       }
 
+      // 取流优先发出，历史记录/关注状态和弹幕不占据网络请求的前置链路。
+      getPlayQualites(playRequest);
       getSuperChatMessage(request);
 
       addHistory();
@@ -603,7 +615,6 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       followed.value = DBService.instance.getFollowExist("${site.id}_$roomId");
       online.value = detail.value!.online;
       liveStatus.value = detail.value!.status || detail.value!.isRecord;
-      getPlayQualites(playRequest);
       if (detail.value!.isRecord) {
         addSysMsg("当前主播未开播，正在轮播录像");
       }
@@ -630,8 +641,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   void _logOpenDuration() {
     if (!_openWatch.isRunning) return;
     _openWatch.stop();
-    if (_openMarks.isEmpty ||
-        !AppSettingsController.instance.logEnable.value) {
+    if (_openMarks.isEmpty) {
       return;
     }
     var last = 0;
@@ -640,9 +650,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       segments.add('${entry.key} ${entry.value - last}ms');
       last = entry.value;
     }
-    Log.d(
-      '开播耗时 ${segments.join(' · ')} · 合计 ${_openWatch.elapsedMilliseconds}ms',
-    );
+    startupTiming.value = '${segments.join(' · ')} · 合计 ${_openWatch.elapsedMilliseconds}ms';
+    if (AppSettingsController.instance.logEnable.value) {
+      Log.d('开播耗时 ${startupTiming.value}');
+    }
   }
 
   /// 初始化播放器
@@ -701,6 +712,9 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
   Future<int> _readQualityLevel() async {
     var qualityLevel = AppSettingsController.instance.qualityLevel.value;
+    // 桌面没有移动流量画质策略。WebView/COM 初始化失败时网络插件的
+    // 原生查询可能访问空对象；这里不进入无必要的原生调用，Dart catch 无法捕获它。
+    if (!Platform.isAndroid && !Platform.isIOS) return qualityLevel;
     try {
       var connectivityResult = await (Connectivity().checkConnectivity());
       if (connectivityResult.first == ConnectivityResult.mobile) {
@@ -747,7 +761,11 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         if (!_isCurrentRequest(currentRequest)) return;
       }
       _nativeVariants = playUrl.nativeVariants;
-      playUrls.value = playUrl.urls;
+      final urls = [...playUrl.urls];
+      final preferred = playUrl.selectedNativeVariant == null
+          ? PlaybackRouteHistory.instance.select(site.id, quality.quality, urls) : 0;
+      if (preferred > 0) urls.insert(0, urls.removeAt(preferred));
+      playUrls.value = urls;
       _markOpen('地址');
       playHeaders = playUrl.headers;
       final variant = playUrl.selectedNativeVariant;
@@ -822,6 +840,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         hasPlayed.value = false;
         playbackDiagnostics?.reset();
         _nativeDropGuard.reset();
+        _openingRoute = (site.id, _routeQuality, mediaUrl);
+        _lineWatch..reset()..start();
         _markOpen('提交开流');
         await player.open(Media(url, httpHeaders: headers));
       } catch (e) {
@@ -885,7 +905,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     });
   }
 
-  Future<void> _recoverPlayback({String? error}) async {
+  Future<void> _recoverPlayback({String? error, bool startup = false}) async {
     final request = _playRequest;
     if (_recoveringPlayback || !_isCurrentRequest(request) || playUrls.isEmpty) return;
     final originalLine = currentLineIndex;
@@ -905,6 +925,16 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       if (await _confirmRoomOffline(request)) return;
       // 网络核验期间可能已经自然恢复或被手动切线，不再打断新连接。
       if (!stillStalled()) return;
+      PlaybackRouteHistory.instance.failure(site.id, _routeQuality, playUrls[currentLineIndex]);
+      _lineWatch.stop();
+      // 首次无进展且已有备用流，不再串行等待同一平台重新签名取流。
+      // 播放中断流仍保留下面的鉴权更新流程。
+      if (startup && !hasPlayed.value && currentLineIndex + 1 < playUrls.length) {
+        currentLineIndex++;
+        mediaErrorRetryCount = 0;
+        await setPlayer();
+        return;
+      }
       if ((site.id == Constant.kHuya || site.id == Constant.kBiliBili) &&
           detail.value != null &&
           currentQuality >= 0 && currentQuality < qualites.length) {
@@ -964,6 +994,14 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   @override
   void mediaPosition(Duration position) {
     super.mediaPosition(position);
+    if (position > Duration.zero && _lineWatch.isRunning && !_roomClosed &&
+        !roomOffline.value && !isBackground) {
+      _lineWatch.stop();
+      final route = _openingRoute;
+      if (route != null) {
+        PlaybackRouteHistory.instance.success(route.$1, route.$2, route.$3, _lineWatch.elapsed);
+      }
+    }
     if (position > Duration.zero && _openMarks.containsKey('提交开流')) {
       // open() completes when mpv accepts the command, not when playback starts.
       _markOpen('播放进度');
@@ -983,8 +1021,8 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     final request = _playRequest;
     final line = currentLineIndex;
     final position = player.state.position;
-    // 首次起播保留宽限；播放中卡死更快换线，短暂抖动仍交给 mpv 缓存。
-    final timeout = Duration(seconds: hasPlayed.value ? 8 : 15);
+    // 多线路起播无进展时提早试备用线；单线路保留15秒宽限。
+    final timeout = Duration(seconds: hasPlayed.value || playUrls.length > 1 ? 8 : 15);
     _bufferingTimer = Timer(timeout, () {
       _bufferingTimer = null;
       if (!_isCurrentRequest(request) || currentLineIndex != line ||
@@ -997,7 +1035,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
         mediaBuffering(true);
         return;
       }
-      _recoverPlayback(error: "缓冲超时");
+      _recoverPlayback(error: "缓冲超时", startup: !hasPlayed.value);
     });
   }
 
@@ -1536,6 +1574,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     }
 
     final request = ++_roomRequest;
+    _lineWatch.stop();
     ++_playRequest;
     _emoticons?.dispose();
     _emoticons = null;
@@ -1557,7 +1596,7 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     if (!_isCurrentRoomRequest(request)) return;
 
     // 刷新信息
-    loadData();
+    loadData(reusePrefetch: true);
   }
 
   void copyErrorDetail() {
@@ -1621,6 +1660,7 @@ ${errorStackTrace ?? ''}''');
   @override
   void onClose() async {
     _roomClosed = true;
+    _lineWatch.stop();
     disposeStream();
     _emoticons?.dispose();
     _emoticons = null;
